@@ -16,9 +16,10 @@ import {
   Sparkles,
   Trash2,
   Video,
+  X,
   Zap,
 } from 'lucide-react';
-import { AnalyzerToolType, CategoryType, FileNode } from '../types/fileManager';
+import { AnalyzerToolType, CategoryType, FileNode, TabWindow } from '../types/fileManager';
 import {
   INTERNAL_SYSTEM_RESERVED_BYTES,
   INTERNAL_TOTAL_BYTES,
@@ -33,6 +34,10 @@ interface HomeDashboardProps {
   sdCardMounted: boolean;
   storageStats?: DeviceStorageStats | null;
   hasPermission?: boolean;
+  openWindows?: TabWindow[];
+  maxWindows?: number;
+  onSelectWindow?: (windowId: string) => void;
+  onCloseWindow?: (windowId: string) => void;
   onRequestPermission?: () => void;
   onOpenFolder: (folderId: string) => void;
   onOpenTool: (tool: AnalyzerToolType) => void;
@@ -195,6 +200,10 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
   sdCardMounted,
   storageStats,
   hasPermission = true,
+  openWindows = [],
+  maxWindows = 3,
+  onSelectWindow,
+  onCloseWindow,
   onRequestPermission,
   onOpenFolder,
   onOpenTool,
@@ -370,6 +379,43 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
 
   return (
     <div className="max-w-5xl mx-auto px-2.5 sm:px-6 py-4 sm:py-5 space-y-5 sm:space-y-6">
+      {/* Open Windows Strip (quick switch or close when windows are open) */}
+      {openWindows.length > 0 && onSelectWindow && onCloseWindow && (
+        <section aria-label="Open Windows" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-3 py-2 flex items-center gap-2 overflow-x-auto">
+          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 shrink-0 whitespace-nowrap tabular-nums">
+            Windows ({openWindows.length}/{maxWindows})
+          </span>
+          <div className="flex items-center gap-1.5">
+            {openWindows.map((win, idx) => (
+              <div
+                key={win.id}
+                className="flex items-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 overflow-hidden shrink-0"
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelectWindow(win.id)}
+                  className="pl-2.5 pr-1.5 py-1 flex items-center gap-1.5 text-xs font-medium text-slate-800 dark:text-slate-100 hover:bg-slate-200/70 dark:hover:bg-slate-700/70"
+                >
+                  <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400 tabular-nums">
+                    W{idx + 1}
+                  </span>
+                  <span className="max-w-[96px] truncate">{win.title}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCloseWindow(win.id)}
+                  className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+                  aria-label={`Close W${idx + 1}`}
+                  title={`Close W${idx + 1}`}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Permission Request Prompt if not yet granted */}
       {!hasPermission && (
         <section aria-label="Storage Permission Banner">

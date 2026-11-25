@@ -27,6 +27,7 @@ interface AnalyzerViewProps {
   emptyFoldersLoading?: boolean;
   showThumbnails: boolean;
   onBackHome: () => void;
+  onSelectTool?: (tool: AnalyzerToolType) => void;
   onRefreshEmptyFolders?: () => void;
   onOpenFolder: (folderId: string) => void;
   onOpenFile: (file: FileNode, contextList?: FileNode[]) => void;
@@ -41,12 +42,21 @@ interface AnalyzerViewProps {
   onClearAppCache: (ids: string[]) => void;
 }
 
+export const ANALYZER_TABS: { id: AnalyzerToolType; label: string }[] = [
+  { id: 'file_analyzer', label: 'File Analyzer' },
+  { id: 'large_files', label: 'Large Files' },
+  { id: 'recent_files', label: 'Recent Files' },
+  { id: 'empty_folders', label: 'Empty Folders' },
+  { id: 'app_cache', label: 'Apps Cache' },
+  { id: 'duplicate_files', label: 'Duplicate Files' },
+];
+
 const TOOL_TITLES: Record<AnalyzerToolType, string> = {
   file_analyzer: 'File Analyzer',
   large_files: 'Large Files',
   recent_files: 'Recent Files',
   empty_folders: 'Empty Folders',
-  app_cache: 'App Cache',
+  app_cache: 'Apps Cache',
   duplicate_files: 'Duplicate Files',
 };
 
@@ -79,7 +89,7 @@ const AnalyzerFileRow: React.FC<SelectableRowProps> = memo(({
   return (
     <div
       onClick={() => (isSelecting ? onToggleSelect(node.id) : onPrimaryClick(node))}
-      className={`cv-row px-3.5 sm:px-4 py-3 flex items-center gap-3 cursor-pointer select-none ${
+      className={`cv-row px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2.5 sm:gap-3 cursor-pointer select-none min-w-0 ${
         selected
           ? 'bg-blue-50/90 dark:bg-blue-950/40'
           : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
@@ -87,19 +97,22 @@ const AnalyzerFileRow: React.FC<SelectableRowProps> = memo(({
     >
       <FileIcon node={node} showThumbnails={showThumbnails} size="md" />
 
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-slate-900 dark:text-slate-100 break-words leading-snug line-clamp-2">
+      <div className="min-w-0 flex-1 overflow-hidden">
+        <div
+          className="text-[13px] sm:text-sm font-medium text-slate-900 dark:text-slate-100 leading-snug line-clamp-2 [overflow-wrap:anywhere]"
+          title={node.name}
+        >
           {node.name}
         </div>
-        <div className="mt-1 flex items-center justify-between gap-2">
-          <div className="min-w-0 flex-1 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+        <div className="mt-0.5 flex items-center justify-between gap-1.5 min-w-0">
+          <div className="min-w-0 flex-1 flex items-center gap-1.5 text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 tabular-nums overflow-hidden">
             {rightText && (
-              <span className="font-semibold text-slate-700 dark:text-slate-300 shrink-0">
+              <span className="font-semibold text-slate-700 dark:text-slate-300 shrink-0 whitespace-nowrap">
                 {rightText}
               </span>
             )}
             {rightText && subtitle && <span className="shrink-0">·</span>}
-            <span className="truncate">{subtitle}</span>
+            <span className="truncate min-w-0">{subtitle}</span>
           </div>
 
           {!isSelecting && (
@@ -110,11 +123,11 @@ const AnalyzerFileRow: React.FC<SelectableRowProps> = memo(({
                   e.stopPropagation();
                   onMoveSingle(node.id);
                 }}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40"
+                className="p-1 sm:p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40"
                 aria-label={`Move ${node.name}`}
                 title="Move"
               >
-                <FolderInput size={15} />
+                <FolderInput size={14} />
               </button>
               <button
                 type="button"
@@ -122,11 +135,11 @@ const AnalyzerFileRow: React.FC<SelectableRowProps> = memo(({
                   e.stopPropagation();
                   onDeleteSingle(node.id);
                 }}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                className="p-1 sm:p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
                 aria-label={`Delete ${node.name}`}
                 title="Delete"
               >
-                <Trash2 size={15} />
+                <Trash2 size={14} />
               </button>
             </div>
           )}
@@ -163,6 +176,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
   emptyFoldersLoading = false,
   showThumbnails,
   onBackHome,
+  onSelectTool,
   onRefreshEmptyFolders,
   onOpenFolder,
   onOpenFile,
@@ -181,12 +195,25 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [visibleLimit, setVisibleLimit] = useState(40);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  const activeTabBtnRef = useRef<HTMLButtonElement>(null);
+  const swipePaneRef = useRef<HTMLDivElement>(null);
+  const tabSwipeRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    lastDx: number;
+  } | null>(null);
 
   useEffect(() => {
     setSelectedIds([]);
     setMoreMenuOpen(false);
     setExpandedGroup(null);
     setVisibleLimit(40);
+    activeTabBtnRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      inline: 'center',
+      block: 'nearest',
+    });
   }, [tool]);
 
   const getCachedPath = useMemo(() => {
@@ -431,20 +458,89 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
     return pool.filter((f) => selectedIds.includes(f.id));
   }, [tool, nativeEmptyFolders, files, selectedIds]);
 
+  const activeTabIndex = ANALYZER_TABS.findIndex((t) => t.id === tool);
+
+  const resetPaneTransform = useCallback((animated: boolean) => {
+    const el = swipePaneRef.current;
+    if (!el) return;
+    el.style.transition = animated ? 'transform 160ms cubic-bezier(0.22, 1, 0.36, 1)' : '';
+    el.style.transform = 'translate3d(0px, 0px, 0px)';
+  }, []);
+
+  const handlePaneTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length !== 1 || !onSelectTool) {
+      tabSwipeRef.current = null;
+      return;
+    }
+    const touch = e.touches[0];
+    tabSwipeRef.current = {
+      active: true,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastDx: 0,
+    };
+    const el = swipePaneRef.current;
+    if (el) el.style.transition = '';
+  }, [onSelectTool]);
+
+  const handlePaneTouchMove = useCallback(
+    (e: React.TouchEvent) => {
+      const state = tabSwipeRef.current;
+      if (!state || !state.active || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - state.startX;
+      const dy = e.touches[0].clientY - state.startY;
+      if (Math.abs(dy) > 22 && Math.abs(dy) > Math.abs(dx) * 0.9) {
+        tabSwipeRef.current = null;
+        resetPaneTransform(true);
+        return;
+      }
+      const canGoNext = dx < -8 && activeTabIndex < ANALYZER_TABS.length - 1;
+      const canGoPrev = dx > 8 && activeTabIndex > 0;
+      if ((canGoNext || canGoPrev) && Math.abs(dx) > Math.abs(dy) * 1.1) {
+        e.stopPropagation();
+        const clamped = Math.max(-120, Math.min(120, dx));
+        state.lastDx = clamped;
+        const el = swipePaneRef.current;
+        if (el) {
+          el.style.transform = `translate3d(${clamped * 0.25}px, 0px, 0px)`;
+        }
+      }
+    },
+    [activeTabIndex, resetPaneTransform]
+  );
+
+  const handlePaneTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      const state = tabSwipeRef.current;
+      tabSwipeRef.current = null;
+      resetPaneTransform(true);
+      if (!state || !state.active || !onSelectTool) return;
+      if (Math.abs(state.lastDx) > 8) {
+        e.stopPropagation();
+      }
+      if (state.lastDx <= -56 && activeTabIndex < ANALYZER_TABS.length - 1) {
+        onSelectTool(ANALYZER_TABS[activeTabIndex + 1].id);
+      } else if (state.lastDx >= 56 && activeTabIndex > 0) {
+        onSelectTool(ANALYZER_TABS[activeTabIndex - 1].id);
+      }
+    },
+    [activeTabIndex, onSelectTool, resetPaneTransform]
+  );
+
   return (
-    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 space-y-4 pb-24">
+    <div className="max-w-5xl mx-auto px-3 sm:px-6 py-3 sm:py-4 space-y-3 sm:space-y-4 pb-24 overflow-x-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="flex items-center justify-between gap-2 min-w-0">
+        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
           <button
             type="button"
             onClick={onBackHome}
-            className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
+            className="min-w-[38px] min-h-[38px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
             aria-label="Back"
           >
-            <ArrowLeft size={18} />
+            <ArrowLeft size={17} />
           </button>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 truncate">
+          <h2 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-slate-100 truncate">
             {TOOL_TITLES[tool]}
           </h2>
         </div>
@@ -455,45 +551,85 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
             onClick={() =>
               setSelectedIds(allVisibleSelected ? [] : visibleSelectableIds)
             }
-            className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
+            className="px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0 whitespace-nowrap"
           >
             {allVisibleSelected ? 'Deselect All' : 'Select All'}
           </button>
         )}
       </div>
 
+      {/* Horizontal Scrollable Tab Bar */}
+      <div
+        role="tablist"
+        aria-label="File Analyzer sections"
+        className="flex items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {ANALYZER_TABS.map((tab) => {
+          const isActive = tool === tab.id;
+          return (
+            <button
+              key={tab.id}
+              ref={isActive ? activeTabBtnRef : undefined}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => onSelectTool?.(tab.id)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
+                isActive
+                  ? 'bg-blue-600 text-white shadow-xs'
+                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Selection Banner */}
       {isSelecting && (
-        <div className="px-4 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900/60 flex items-center justify-between text-sm">
-          <span className="font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
+        <div className="px-3.5 sm:px-4 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900/60 flex items-center justify-between gap-2 text-xs sm:text-sm">
+          <span className="font-semibold text-blue-700 dark:text-blue-300 tabular-nums truncate">
             {selectedIds.length} selected
           </span>
           <button
             type="button"
             onClick={() => setSelectedIds([])}
-            className="text-xs font-medium text-blue-700 dark:text-blue-300 hover:underline flex items-center gap-1"
+            className="text-[11px] sm:text-xs font-medium text-blue-700 dark:text-blue-300 hover:underline flex items-center gap-1 shrink-0 whitespace-nowrap"
           >
-            <X size={14} /> Clear
+            <X size={13} /> Clear
           </button>
         </div>
       )}
 
+      {/* Swipeable Analyzer Tab Content */}
+      <div
+        ref={swipePaneRef}
+        data-analyzer-pane="true"
+        onTouchStart={handlePaneTouchStart}
+        onTouchMove={handlePaneTouchMove}
+        onTouchEnd={handlePaneTouchEnd}
+        onTouchCancel={handlePaneTouchEnd}
+        className="space-y-3 sm:space-y-4 min-h-[260px]"
+        style={{ touchAction: 'pan-y' }}
+      >
+
       {/* Tool Body: File Analyzer (Expandable Categories) */}
       {tool === 'file_analyzer' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <BarChart3 size={20} className="text-blue-600 dark:text-blue-400" />
-              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 sm:p-5 space-y-4 overflow-hidden">
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <BarChart3 size={18} className="text-blue-600 dark:text-blue-400 shrink-0" />
+              <h3 className="text-sm sm:text-base font-semibold text-slate-900 dark:text-slate-100 truncate">
                 Storage Distribution
               </h3>
             </div>
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 tabular-nums">
+            <span className="text-[11px] sm:text-xs font-semibold text-slate-700 dark:text-slate-300 tabular-nums shrink-0 whitespace-nowrap">
               {formatBytes(totalAnalyzedBytes)} indexed
             </span>
           </div>
 
-          <div className="h-3.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
+          <div className="h-3 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex">
             {breakdownGroups.map((g) => {
               const pct = totalAnalyzedBytes > 0 ? (g.bytes / totalAnalyzedBytes) * 100 : 0;
               if (pct <= 0) return null;
@@ -513,32 +649,32 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
               const pct = totalAnalyzedBytes > 0 ? (g.bytes / totalAnalyzedBytes) * 100 : 0;
               const isOpen = expandedGroup === g.id;
               return (
-                <div key={g.id}>
+                <div key={g.id} className="min-w-0">
                   <button
                     type="button"
                     onClick={() => {
                       setExpandedGroup((prev) => (prev === g.id ? null : g.id));
                       setSelectedIds([]);
                     }}
-                    className="w-full py-3.5 flex items-center justify-between text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 px-2 rounded-xl transition-colors"
+                    className="w-full py-3 flex items-center justify-between gap-2 text-xs sm:text-sm text-left hover:bg-slate-50 dark:hover:bg-slate-800/40 px-1.5 sm:px-2 rounded-xl transition-colors min-w-0"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className={`w-3 h-3 rounded-sm shrink-0 ${g.color}`} />
+                    <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1">
+                      <span className={`w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-sm shrink-0 ${g.color}`} />
                       <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
                         {g.label}
                       </span>
-                      <span className="text-xs text-slate-400 tabular-nums">
+                      <span className="text-[11px] text-slate-400 tabular-nums shrink-0">
                         ({g.items.length})
                       </span>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="tabular-nums text-xs sm:text-sm text-slate-600 dark:text-slate-400">
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="tabular-nums text-[11px] sm:text-xs text-slate-600 dark:text-slate-400 whitespace-nowrap">
                         {formatBytes(g.bytes)} · {pct.toFixed(1)}%
                       </span>
                       {isOpen ? (
-                        <ChevronDown size={16} className="text-slate-400" />
+                        <ChevronDown size={15} className="text-slate-400 shrink-0" />
                       ) : (
-                        <ChevronRight size={16} className="text-slate-400" />
+                        <ChevronRight size={15} className="text-slate-400 shrink-0" />
                       )}
                     </div>
                   </button>
@@ -580,7 +716,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
       {tool === 'large_files' && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
           {largeFiles.length === 0 ? (
-            <div className="p-10 text-center text-sm text-slate-500">
+            <div className="p-10 text-center text-xs sm:text-sm text-slate-500">
               No files larger than 50 MB found.
             </div>
           ) : (
@@ -615,7 +751,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
       {tool === 'recent_files' && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
           {recentFiles.length === 0 ? (
-            <div className="p-10 text-center text-sm text-slate-500">
+            <div className="p-10 text-center text-xs sm:text-sm text-slate-500">
               No recent files indexed yet.
             </div>
           ) : (
@@ -649,12 +785,12 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
       {tool === 'empty_folders' && (
         <div className="space-y-3">
           {(emptyFolders.length > 0 || onRefreshEmptyFolders) && (
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               {onRefreshEmptyFolders && (
                 <button
                   type="button"
                   onClick={onRefreshEmptyFolders}
-                  className="min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                  className="min-h-[36px] sm:min-h-[40px] px-3 sm:px-3.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 whitespace-nowrap"
                 >
                   Scan Again
                 </button>
@@ -663,7 +799,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
                 <button
                   type="button"
                   onClick={() => onCleanEmptyFolders(emptyFolders.map((f) => f.id))}
-                  className="min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+                  className="min-h-[36px] sm:min-h-[40px] px-3 sm:px-4 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
                 >
                   Remove All Empty Folders ({emptyFolders.length})
                 </button>
@@ -674,10 +810,10 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
             {emptyFoldersLoading && emptyFolders.length === 0 ? (
               <div className="p-10 text-center space-y-2.5">
                 <div className="w-6 h-6 mx-auto rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-                <p className="text-sm text-slate-500">Scanning storage for empty folders...</p>
+                <p className="text-xs sm:text-sm text-slate-500">Scanning storage for empty folders...</p>
               </div>
             ) : emptyFolders.length === 0 ? (
-              <div className="p-10 text-center text-sm text-slate-500">
+              <div className="p-10 text-center text-xs sm:text-sm text-slate-500">
                 No empty folders detected. Storage is clean.
               </div>
             ) : (
@@ -703,19 +839,18 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
 
       {/* Tool Body: App Cache */}
       {tool === 'app_cache' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center">
-                <Zap size={20} />
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 sm:p-5 space-y-4 overflow-hidden">
+          <div className="flex items-center justify-between gap-2.5 min-w-0">
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <Zap size={18} />
               </div>
-              <div>
-                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+              <div className="min-w-0">
+                <h3 className="text-sm sm:text-base font-semibold text-slate-900 dark:text-slate-100 truncate">
                   Cached App Data
                 </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-                  {formatBytes(totalCacheBytes)} reclaimable across {cacheFiles.length} cache
-                  files
+                <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 tabular-nums truncate">
+                  {formatBytes(totalCacheBytes)} · {cacheFiles.length} cache files
                 </p>
               </div>
             </div>
@@ -723,7 +858,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
               <button
                 type="button"
                 onClick={() => onClearAppCache(cacheFiles.map((f) => f.id))}
-                className="min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+                className="min-h-[36px] sm:min-h-[40px] px-3 sm:px-4 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shrink-0 whitespace-nowrap"
               >
                 Clear Cache
               </button>
@@ -731,11 +866,11 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
           </div>
 
           {cacheFiles.length === 0 ? (
-            <p className="text-sm text-slate-500 py-4 text-center">
+            <p className="text-xs sm:text-sm text-slate-500 py-4 text-center">
               All temporary app caches are cleared.
             </p>
           ) : (
-            <div className="-mx-5 border-t border-slate-100 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
+            <div className="-mx-3.5 sm:-mx-5 border-t border-slate-100 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
               {cacheFiles.map((c) => (
                 <AnalyzerFileRow
                   key={c.id}
@@ -761,7 +896,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
       {tool === 'duplicate_files' && (
         <div className="space-y-4">
           {duplicateGroups.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-10 text-center text-sm text-slate-500">
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-10 text-center text-xs sm:text-sm text-slate-500">
               No duplicate files found.
             </div>
           ) : (
@@ -770,17 +905,19 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
                 key={group[0].hash || idx}
                 className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden"
               >
-                <div className="px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
-                  <span className="font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-                    <Copy size={14} />
-                    Duplicate Group {idx + 1} · {formatBytes(group[0].size)} each
+                <div className="px-3 sm:px-4 py-2.5 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 text-[11px] sm:text-xs min-w-0">
+                  <span className="font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5 min-w-0 truncate">
+                    <Copy size={13} className="shrink-0" />
+                    <span className="truncate">
+                      Group {idx + 1} · {formatBytes(group[0].size)} each
+                    </span>
                   </span>
                   <button
                     type="button"
                     onClick={() => onDeleteFiles(group.slice(1).map((g) => g.id))}
-                    className="font-semibold text-rose-600 dark:text-rose-400 hover:underline"
+                    className="font-semibold text-rose-600 dark:text-rose-400 hover:underline shrink-0 whitespace-nowrap"
                   >
-                    Keep First & Delete Copies
+                    Keep First
                   </button>
                 </div>
                 <div className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -805,6 +942,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
           )}
         </div>
       )}
+      </div>
 
       {/* Fixed Bottom Action Bar when selecting */}
       {isSelecting && (

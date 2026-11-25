@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronRight, Home, Menu, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Home, Menu } from 'lucide-react';
 import {
   ActiveScreen,
   AnalyzerToolType,
@@ -49,6 +49,7 @@ import {
 import { APP_VERSION_NAME } from './versionInfo';
 
 const LATEST_VERSION_NAME = APP_VERSION_NAME;
+const MAX_WINDOWS = 3;
 
 function screensEqual(a: ActiveScreen, b: ActiveScreen): boolean {
   if (a.type !== b.type) return false;
@@ -94,7 +95,7 @@ function getScreenTitle(screen: ActiveScreen, files: FileNode[]): string {
         large_files: 'Large Files',
         recent_files: 'Recent Files',
         empty_folders: 'Empty Folders',
-        app_cache: 'App Cache',
+        app_cache: 'Apps Cache',
         duplicate_files: 'Duplicate Files',
       };
       return labels[screen.tool];
@@ -199,10 +200,9 @@ export default function App() {
 
   const fileUploadInputRef = useRef<HTMLInputElement>(null);
 
-  const [tabs, setTabs] = useState<TabWindow[]>([
-    { id: 'tab_1', title: 'Home', screen: { type: 'home' }, backStack: [] },
-  ]);
-  const [activeTabId, setActiveTabId] = useState('tab_1');
+  const [windows, setWindows] = useState<TabWindow[]>([]);
+  const [activeWindowId, setActiveWindowId] = useState<string | null>(null);
+  const [utilityScreen, setUtilityScreen] = useState<'settings' | 'about' | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -299,32 +299,45 @@ export default function App() {
     return () => media.removeEventListener('change', applyTheme);
   }, [settings.theme]);
 
-  // If SD card gets unmounted while viewing an SD folder, navigate safely back to Home
+  // If SD card gets unmounted while viewing an SD folder, safely close SD windows or return Home
   useEffect(() => {
     if (!settings.sdCardMounted) {
-      setTabs((prev) =>
-        prev.map((tab) => {
-          if (tab.screen.type === 'folder') {
-            const path = getNodePath(tab.screen.folderId, files);
-            if (path.startsWith('/storage/sdcard1')) {
-              return { ...tab, title: 'Home', screen: { type: 'home' }, backStack: [] };
-            }
+      setWindows((prev) => {
+        const filtered = prev.filter((win) => {
+          if (win.screen.type === 'folder') {
+            const path = getNodePath(win.screen.folderId, files);
+            return !path.startsWith('/storage/sdcard1');
           }
-          return tab;
-        })
-      );
+          return true;
+        });
+        if (filtered.length !== prev.length && activeWindowId && !filtered.some((w) => w.id === activeWindowId)) {
+          setActiveWindowId(null);
+        }
+        return filtered.length === prev.length ? prev : filtered;
+      });
     }
-  }, [settings.sdCardMounted, files]);
+  }, [settings.sdCardMounted, files, activeWindowId]);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
-  const activeScreen = activeTab.screen;
+  const activeWindow = activeWindowId
+    ? windows.find((w) => w.id === activeWindowId) || null
+    : null;
+  const isHomeActive = !utilityScreen && !activeWindow;
+  const activeScreen: ActiveScreen = utilityScreen
+    ? { type: utilityScreen }
+    : activeWindow
+      ? activeWindow.screen
+      : { type: 'home' };
 
   const filesRef = useRef(files);
   filesRef.current = files;
   const nativeEmptyFoldersRef = useRef(nativeEmptyFolders);
   nativeEmptyFoldersRef.current = nativeEmptyFolders;
-  const activeTabIdRef = useRef(activeTab.id);
-  activeTabIdRef.current = activeTab.id;
+  const windowsRef = useRef(windows);
+  windowsRef.current = windows;
+  const activeWindowIdRef = useRef(activeWindow?.id ?? null);
+  activeWindowIdRef.current = activeWindow?.id ?? null;
+  const utilityScreenRef = useRef(utilityScreen);
+  utilityScreenRef.current = utilityScreen;
   const activeScreenRef = useRef(activeScreen);
   activeScreenRef.current = activeScreen;
   const storageStatsRef = useRef(storageStats);
@@ -709,33 +722,65 @@ export default function App() {
   const navigateInActiveTab = useCallback((screen: ActiveScreen) => {
     setSearchOpen(false);
     setSearchQuery('');
-    syncScreenSideEffects(screen);
+
+    if (screen.type === 'home') {
+      setUtilityScreen(null);
+      setActiveWindowId(null);
+      return;
+    }
+
+    if (screen.type === 'settings' || screen.type === 'about') {
+      setUtilityScreen(screen.type);
+      return;
+    }
 
     const currentFiles = filesRef.current;
+    const currentWinId = activeWindowIdRef.current;
+    const isCurrentlyOnHome = !currentWinId || utilityScreenRef.current !== null;
+
+    if (isCurrentlyOnHome) {
+      if (windowsRef.current.length >= MAX_WINDOWS) {
+        setUtilityScreen(null);
+        setActiveWindowId(null);
+        showToast(`Maximum ${MAX_WINDOWS} windows limit reached. Close a window to open another.`);
+        return;
+      }
+
+      const id = `win_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+      const newWin: TabWindow = {
+        id,
+        title: getScreenTitle(screen, currentFiles),
+        screen,
+        backStack: [],
+      };
+      setUtilityScreen(null);
+      setWindows((prev) => (prev.length >= MAX_WINDOWS ? prev : [...prev, newWin]));
+      setActiveWindowId(id);
+      syncScreenSideEffects(screen);
+      return;
+    }
+
     const title = getScreenTitle(screen, currentFiles);
-    const targetTabId = activeTabIdRef.current;
-    setTabs((prev) =>
-      prev.map((t) => {
-        if (t.id !== targetTabId) return t;
-        if (screen.type === 'home') {
-          return { ...t, title, screen, backStack: [] };
-        }
-        if (screensEqual(t.screen, screen)) {
-          return { ...t, title, screen };
+    setWindows((prev) =>
+      prev.map((w) => {
+        if (w.id !== currentWinId) return w;
+        if (screensEqual(w.screen, screen)) {
+          return { ...w, title, screen };
         }
         return {
-          ...t,
+          ...w,
           title,
           screen,
-          backStack: [...t.backStack, t.screen],
+          backStack: [...w.backStack, w.screen],
         };
       })
     );
-  }, [syncScreenSideEffects]);
+    syncScreenSideEffects(screen);
+  }, [syncScreenSideEffects, showToast]);
 
   // Step-by-step Back Navigation Stack:
-  // Any non-home segment returns to the previous screen in backStack until reaching Home;
-  // On Home screen, pressing Back shows Exit Confirmation Dialog!
+  // Any non-home segment returns to the previous screen in backStack until reaching Home
+  // (leaving the window open); On Home screen, pressing Back shows Exit Confirmation Dialog!
   const handleBackAction = () => {
     if (exitConfirmOpen) {
       setExitConfirmOpen(false);
@@ -787,45 +832,52 @@ export default function App() {
       return;
     }
 
-    if (activeScreen.type !== 'home') {
-      if (activeTab.backStack.length > 0) {
-        const prevScreen = activeTab.backStack[activeTab.backStack.length - 1];
-        const nextStack = activeTab.backStack.slice(0, -1);
+    if (utilityScreen !== null) {
+      setUtilityScreen(null);
+      return;
+    }
+
+    if (activeWindow) {
+      if (activeWindow.backStack.length > 0) {
+        const prevScreen = activeWindow.backStack[activeWindow.backStack.length - 1];
+        const nextStack = activeWindow.backStack.slice(0, -1);
         syncScreenSideEffects(prevScreen);
         const title = getScreenTitle(prevScreen, filesRef.current);
-        const targetTabId = activeTab.id;
-        setTabs((prev) =>
-          prev.map((t) =>
-            t.id === targetTabId
+        const targetId = activeWindow.id;
+        setWindows((prev) =>
+          prev.map((w) =>
+            w.id === targetId
               ? {
-                  ...t,
+                  ...w,
                   title,
                   screen: prevScreen,
-                  backStack: prevScreen.type === 'home' ? [] : nextStack,
+                  backStack: nextStack,
                 }
-              : t
+              : w
           )
         );
         return;
       }
 
-      if (activeScreen.type === 'folder') {
-        const currentFolder = files.find((f) => f.id === activeScreen.folderId);
+      if (activeWindow.screen.type === 'folder') {
+        const currentFolderId = activeWindow.screen.folderId;
+        const currentFolder = files.find((f) => f.id === currentFolderId);
         if (currentFolder && currentFolder.parentId && currentFolder.parentId !== null) {
           const parentScreen: ActiveScreen = { type: 'folder', folderId: currentFolder.parentId };
           syncScreenSideEffects(parentScreen);
           const title = getScreenTitle(parentScreen, filesRef.current);
-          const targetTabId = activeTab.id;
-          setTabs((prev) =>
-            prev.map((t) =>
-              t.id === targetTabId ? { ...t, title, screen: parentScreen, backStack: [] } : t
+          const targetId = activeWindow.id;
+          setWindows((prev) =>
+            prev.map((w) =>
+              w.id === targetId ? { ...w, title, screen: parentScreen, backStack: [] } : w
             )
           );
           return;
         }
       }
 
-      navigateInActiveTab({ type: 'home' });
+      // Return to Home screen while keeping this window open
+      setActiveWindowId(null);
       return;
     }
 
@@ -930,32 +982,67 @@ export default function App() {
     showToast(`Scanned ${scannedFiles.length} item(s) from phone storage`);
   };
 
-  const handleNewTab = () => {
-    const id = `tab_${Date.now()}`;
-    const newTab: TabWindow = {
+  const handleSelectWindow = useCallback((windowId: string) => {
+    const target = windowsRef.current.find((w) => w.id === windowId);
+    if (!target) return;
+    setSearchOpen(false);
+    setSearchQuery('');
+    setUtilityScreen(null);
+    setActiveWindowId(windowId);
+    syncScreenSideEffects(target.screen);
+  }, [syncScreenSideEffects]);
+
+  const handleNewWindow = useCallback(() => {
+    if (windowsRef.current.length >= MAX_WINDOWS) {
+      showToast(`Maximum ${MAX_WINDOWS} windows limit reached`);
+      return;
+    }
+    const id = `win_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+    const screen: ActiveScreen = { type: 'folder', folderId: 'internal_root' };
+    const newWin: TabWindow = {
       id,
       title: 'Internal',
-      screen: { type: 'folder', folderId: 'internal_root' },
-      backStack: [{ type: 'home' }],
+      screen,
+      backStack: [],
     };
-    setTabs((prev) => [...prev, newTab]);
-    setActiveTabId(id);
+    setUtilityScreen(null);
     setSearchOpen(false);
-  };
+    setSearchQuery('');
+    setWindows((prev) => (prev.length >= MAX_WINDOWS ? prev : [...prev, newWin]));
+    setActiveWindowId(id);
+    syncScreenSideEffects(screen);
+  }, [syncScreenSideEffects, showToast]);
 
-  const handleCloseTab = (tabId: string) => {
-    if (tabs.length <= 1) return;
-    const remaining = tabs.filter((t) => t.id !== tabId);
-    setTabs(remaining);
-    if (activeTabId === tabId) {
-      setActiveTabId(remaining[remaining.length - 1].id);
-    }
-  };
+  const handleCloseWindow = useCallback((windowId: string) => {
+    setWindows((prev) => {
+      const idx = prev.findIndex((w) => w.id === windowId);
+      if (idx === -1) return prev;
+      const remaining = prev.filter((w) => w.id !== windowId);
+      if (activeWindowIdRef.current === windowId) {
+        if (remaining.length === 0) {
+          setActiveWindowId(null);
+        } else {
+          const nextWin = remaining[Math.min(idx, remaining.length - 1)];
+          setActiveWindowId(nextWin.id);
+          syncScreenSideEffects(nextWin.screen);
+        }
+      }
+      return remaining;
+    });
+  }, [syncScreenSideEffects]);
 
-  const handleCloseOtherPages = () => {
-    setTabs((prev) => prev.filter((t) => t.id === activeTab.id));
-    showToast('Closed other pages');
-  };
+  const handleCloseOtherWindows = useCallback(() => {
+    const currId = activeWindowIdRef.current;
+    if (!currId) return;
+    setWindows((prev) => prev.filter((w) => w.id === currId));
+    showToast('Closed other windows');
+  }, [showToast]);
+
+  const handleCloseAllWindows = useCallback(() => {
+    setWindows([]);
+    setActiveWindowId(null);
+    showToast('Closed all windows');
+  }, [showToast]);
 
   const handleChangeSort = (sortBy: SortBy, explicitOrder?: SortOrder) => {
     setSettings((prev) => ({
@@ -1729,9 +1816,25 @@ export default function App() {
       )
     : [];
 
-  const nextWindowTab =
-    tabs.length > 1
-      ? tabs[(tabs.findIndex((t) => t.id === activeTab.id) + 1) % tabs.length]
+  const currentWindowIdx =
+    !utilityScreen && !searchOpen && activeWindow
+      ? windows.findIndex((w) => w.id === activeWindow.id)
+      : -1;
+
+  const nextWindowOnRight =
+    !utilityScreen && !searchOpen
+      ? currentWindowIdx === -1
+        ? windows.length > 0
+          ? { index: 0, window: windows[0] }
+          : null
+        : currentWindowIdx < windows.length - 1
+          ? { index: currentWindowIdx + 1, window: windows[currentWindowIdx + 1] }
+          : null
+      : null;
+
+  const prevWindowOnLeft =
+    !utilityScreen && !searchOpen && currentWindowIdx > 0
+      ? { index: currentWindowIdx - 1, window: windows[currentWindowIdx - 1] }
       : null;
 
   const updateSwipeIndicator = useCallback((dx: number) => {
@@ -1779,7 +1882,7 @@ export default function App() {
       edgeSwipeRef.current = null;
       return;
     }
-    // Skip swipe when inside a horizontally scrollable strip (breadcrumbs, tabs, etc.)
+    // Skip swipe when inside a horizontally scrollable strip (breadcrumbs, open windows strip, etc.)
     let el = e.target as HTMLElement | null;
     while (el && el !== e.currentTarget) {
       if (el.scrollWidth > el.clientWidth + 4) {
@@ -1824,49 +1927,68 @@ export default function App() {
       updateRightSwipeIndicator(0);
       return;
     }
-    const maxLeftStartX = Math.max(220, window.innerWidth * 0.65);
-    if (dx > 8 && dx > Math.abs(dy) * 1.15 && state.startX <= maxLeftStartX) {
+    const canSwipeLeftToRight =
+      prevWindowOnLeft !== null ||
+      currentWindowIdx === 0 ||
+      searchOpen ||
+      utilityScreen !== null
+        ? state.startX <= Math.max(280, window.innerWidth * 0.85)
+        : state.startX <= 96;
+
+    if (dx > 8 && dx > Math.abs(dy) * 1.15 && canSwipeLeftToRight) {
       const clamped = Math.min(110, dx);
       state.lastDx = clamped;
       updateSwipeIndicator(clamped);
       updateRightSwipeIndicator(0);
-    } else if (dx < -8 && Math.abs(dx) > Math.abs(dy) * 1.15 && tabs.length > 1) {
+    } else if (dx < -8 && Math.abs(dx) > Math.abs(dy) * 1.15 && nextWindowOnRight !== null) {
       const clamped = Math.max(-110, dx);
       state.lastDx = clamped;
       updateRightSwipeIndicator(clamped);
       updateSwipeIndicator(0);
     }
-  }, [tabs.length, updateSwipeIndicator, updateRightSwipeIndicator]);
+  }, [
+    prevWindowOnLeft,
+    nextWindowOnRight,
+    currentWindowIdx,
+    searchOpen,
+    utilityScreen,
+    updateSwipeIndicator,
+    updateRightSwipeIndicator,
+  ]);
 
   const handleRootTouchEnd = useCallback(() => {
     const state = edgeSwipeRef.current;
     if (state?.active && state.lastDx >= 64) {
-      if (activeScreen.type !== 'home' || searchOpen) {
+      if (searchOpen) {
         setSearchOpen(false);
         setSearchQuery('');
-        navigateInActiveTab({ type: 'home' });
-      } else if (state.startX <= 96) {
+      } else if (utilityScreen !== null) {
+        setUtilityScreen(null);
+      } else if (prevWindowOnLeft) {
+        syncScreenSideEffects(prevWindowOnLeft.window.screen);
+        setActiveWindowId(prevWindowOnLeft.window.id);
+      } else if (currentWindowIdx === 0) {
+        setActiveWindowId(null);
+      } else if (isHomeActive && state.startX <= 96) {
         setDrawerOpen(true);
       }
-    } else if (state?.active && state.lastDx <= -64 && tabs.length > 1) {
-      const idx = tabs.findIndex((t) => t.id === activeTab.id);
-      const targetTab = tabs[(idx + 1) % tabs.length];
-      if (targetTab) {
-        setSearchOpen(false);
-        setSearchQuery('');
-        syncScreenSideEffects(targetTab.screen);
-        setActiveTabId(targetTab.id);
-      }
+    } else if (state?.active && state.lastDx <= -64 && nextWindowOnRight) {
+      setSearchOpen(false);
+      setSearchQuery('');
+      setUtilityScreen(null);
+      syncScreenSideEffects(nextWindowOnRight.window.screen);
+      setActiveWindowId(nextWindowOnRight.window.id);
     }
     edgeSwipeRef.current = null;
     updateSwipeIndicator(0);
     updateRightSwipeIndicator(0);
   }, [
-    activeScreen.type,
-    activeTab.id,
-    tabs,
     searchOpen,
-    navigateInActiveTab,
+    utilityScreen,
+    prevWindowOnLeft,
+    nextWindowOnRight,
+    currentWindowIdx,
+    isHomeActive,
     syncScreenSideEffects,
     updateSwipeIndicator,
     updateRightSwipeIndicator,
@@ -1890,6 +2012,23 @@ export default function App() {
   const handleOpenToolMemo = useCallback(
     (tool: AnalyzerToolType) => navigateInActiveTab({ type: 'analyzer', tool }),
     [navigateInActiveTab]
+  );
+  const handleSelectAnalyzerTabMemo = useCallback(
+    (tool: AnalyzerToolType) => {
+      const targetWinId = activeWindowIdRef.current;
+      if (!targetWinId) return;
+      const nextScreen: ActiveScreen = { type: 'analyzer', tool };
+      const title = getScreenTitle(nextScreen, filesRef.current);
+      setWindows((prev) =>
+        prev.map((w) =>
+          w.id === targetWinId
+            ? { ...w, title, screen: nextScreen }
+            : w
+        )
+      );
+      syncScreenSideEffects(nextScreen);
+    },
+    [syncScreenSideEffects]
   );
   const handleOpenCategoryMemo = useCallback(
     (category: CategoryType) => navigateInActiveTab({ type: 'category', category }),
@@ -1958,22 +2097,38 @@ export default function App() {
       <div
         ref={swipeIndicatorRef}
         style={{ display: 'none', opacity: 0 }}
-        className="fixed left-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none items-center gap-1.5 pl-2 pr-3 py-2.5 rounded-r-2xl bg-blue-600 text-white shadow-xl"
+        className="fixed left-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none items-center gap-1.5 pl-2 pr-3 py-2.5 rounded-r-2xl bg-blue-600 text-white shadow-xl max-w-[190px]"
       >
-        {activeScreen.type !== 'home' || searchOpen ? <Home size={18} /> : <Menu size={18} />}
-        <span className="text-xs font-semibold">
-          {activeScreen.type !== 'home' || searchOpen ? 'Home' : 'Menu'}
-        </span>
+        {prevWindowOnLeft ? (
+          <>
+            <ChevronLeft size={16} className="shrink-0" />
+            <span className="text-xs font-semibold truncate">
+              W{prevWindowOnLeft.index + 1} · {prevWindowOnLeft.window.title}
+            </span>
+          </>
+        ) : currentWindowIdx === 0 || searchOpen || utilityScreen !== null ? (
+          <>
+            <Home size={18} className="shrink-0" />
+            <span className="text-xs font-semibold">Home</span>
+          </>
+        ) : (
+          <>
+            <Menu size={18} className="shrink-0" />
+            <span className="text-xs font-semibold">Menu</span>
+          </>
+        )}
       </div>
 
       {/* Right-to-Left Swipe Next-Window Indicator */}
       <div
         ref={swipeRightIndicatorRef}
         style={{ display: 'none', opacity: 0 }}
-        className="fixed right-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none items-center gap-1.5 pl-3 pr-2 py-2.5 rounded-l-2xl bg-blue-600 text-white shadow-xl max-w-[180px]"
+        className="fixed right-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none items-center gap-1.5 pl-3 pr-2 py-2.5 rounded-l-2xl bg-blue-600 text-white shadow-xl max-w-[190px]"
       >
         <span className="text-xs font-semibold truncate">
-          {nextWindowTab ? nextWindowTab.title : 'Next'}
+          {nextWindowOnRight
+            ? `W${nextWindowOnRight.index + 1} · ${nextWindowOnRight.window.title}`
+            : 'Next'}
         </span>
         <ChevronRight size={16} className="shrink-0" />
       </div>
@@ -2016,12 +2171,15 @@ export default function App() {
         onOpenViewSort={() => setViewSortModalOpen(true)}
         historyPaths={historyPaths}
         onNavigateHistory={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
-        tabs={tabs}
-        activeTabId={activeTab.id}
-        onSelectTab={(id) => setActiveTabId(id)}
-        onNewTab={handleNewTab}
-        onCloseTab={handleCloseTab}
-        onCloseOtherPages={handleCloseOtherPages}
+        windows={windows}
+        activeWindowId={activeWindow?.id ?? null}
+        isHomeActive={isHomeActive}
+        maxWindows={MAX_WINDOWS}
+        onSelectWindow={handleSelectWindow}
+        onNewWindow={handleNewWindow}
+        onCloseWindow={handleCloseWindow}
+        onCloseOtherWindows={handleCloseOtherWindows}
+        onCloseAllWindows={handleCloseAllWindows}
       />
 
       <div className="flex-1 flex">
@@ -2043,41 +2201,6 @@ export default function App() {
 
         {/* Main Viewport */}
         <main className="flex-1 min-w-0">
-          {/* Window Switcher Strip (only shown when >1 window tab is open) */}
-          {tabs.length > 1 && !searchOpen && (
-            <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 py-1.5 flex items-center gap-1.5 overflow-x-auto">
-              {tabs.map((tab) => {
-                const active = tab.id === activeTab.id;
-                return (
-                  <div
-                    key={tab.id}
-                    className={`flex items-center gap-1.5 pl-3 pr-1.5 py-1 rounded-lg text-xs font-medium shrink-0 transition-colors ${
-                      active
-                        ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300'
-                        : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setActiveTabId(tab.id)}
-                      className="max-w-[140px] truncate"
-                    >
-                      {tab.title}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCloseTab(tab.id)}
-                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700"
-                      aria-label={`Close ${tab.title}`}
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
           {searchOpen ? (
             <FileBrowser
               mode="search"
@@ -2113,6 +2236,10 @@ export default function App() {
               sdCardMounted={settings.sdCardMounted}
               storageStats={storageStats}
               hasPermission={hasStoragePermission}
+              openWindows={windows}
+              maxWindows={MAX_WINDOWS}
+              onSelectWindow={handleSelectWindow}
+              onCloseWindow={handleCloseWindow}
               onRequestPermission={handleRequestPermissionMemo}
               onOpenFolder={handleOpenFolderMemo}
               onOpenTool={handleOpenToolMemo}
@@ -2168,6 +2295,7 @@ export default function App() {
               emptyFoldersLoading={emptyFoldersLoading}
               showThumbnails={settings.showThumbnails}
               onBackHome={handleBackStepMemo}
+              onSelectTool={handleSelectAnalyzerTabMemo}
               onRefreshEmptyFolders={isRunningInAndroidApp() ? loadNativeEmptyFolders : undefined}
               onOpenFolder={handleOpenFolderMemo}
               onOpenFile={handleOpenFile}
