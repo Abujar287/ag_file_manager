@@ -5,7 +5,7 @@ echo "=== Building Real Signed Android APK for AG File Manager ==="
 
 BUILD_DIR="/tmp/android-apk-build"
 rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR/src/com/agfilemanager/app"
+mkdir -p "$BUILD_DIR/src/com/ag/filemanager"
 mkdir -p "$BUILD_DIR/res/values"
 mkdir -p "$BUILD_DIR/res/drawable"
 mkdir -p "$BUILD_DIR/assets"
@@ -15,11 +15,11 @@ mkdir -p "$BUILD_DIR/obj"
 cat <<'EOF' > "$BUILD_DIR/AndroidManifest.xml"
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.agfilemanager.app"
+    package="com.ag.filemanager"
     android:versionCode="3"
     android:versionName="1.2.0">
 
-    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="34" />
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -40,7 +40,7 @@ cat <<'EOF' > "$BUILD_DIR/AndroidManifest.xml"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         
         <activity
-            android:name="com.agfilemanager.app.MainActivity"
+            android:name="com.ag.filemanager.MainActivity"
             android:exported="true"
             android:label="@string/launcher_name"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout">
@@ -93,8 +93,8 @@ aapt package -f -m \
   -I /opt/android-tools/android.jar
 
 # 5. MainActivity.java
-cat <<'EOF' > "$BUILD_DIR/src/com/agfilemanager/app/MainActivity.java"
-package com.agfilemanager.app;
+cat <<'EOF' > "$BUILD_DIR/src/com/ag/filemanager/MainActivity.java"
+package com.ag.filemanager;
 
 import android.app.Activity;
 import android.os.Bundle;
@@ -250,7 +250,7 @@ echo "[2/7] Compiling Java source with javac..."
 javac -encoding UTF-8 \
   -cp /opt/android-tools/android.jar \
   -d "$BUILD_DIR/obj" \
-  "$BUILD_DIR/src/com/agfilemanager/app"/*.java
+  "$BUILD_DIR/src/com/ag/filemanager"/*.java
 
 # 7. Compile classes to classes.dex with D8
 echo "[3/7] Compiling bytecode to classes.dex with D8..."
@@ -258,7 +258,7 @@ java -cp /opt/android-tools/d8.jar com.android.tools.r8.D8 \
   --lib /opt/android-tools/android.jar \
   --release \
   --output "$BUILD_DIR" \
-  "$BUILD_DIR/obj/com/agfilemanager/app"/*.class
+  "$BUILD_DIR/obj/com/ag/filemanager"/*.class
 
 # 8. Copy web bundle into assets
 echo "[4/7] Packaging assets..."

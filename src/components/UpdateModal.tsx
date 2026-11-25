@@ -24,9 +24,9 @@ type ModalPhase =
   | 'installed'
   | 'error';
 
-// Lightweight R8-minified APK footprint (~1.8 MB)
-const TOTAL_APK_MB = 1.8;
-const TOTAL_APK_BYTES = Math.round(TOTAL_APK_MB * 1024 * 1024);
+// Release APK footprint (~4.5 MB)
+const TOTAL_APK_MB = 4.5;
+const TOTAL_APK_BYTES = 4509779;
 
 export const UpdateModal: React.FC<UpdateModalProps> = ({
   open,
@@ -102,47 +102,58 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
 
   const targetFilename = `AG_File_Manager_v${newVersion}.apk`;
 
-  const startDownload = () => {
+  const startDownload = async () => {
     setErrorMessage('');
     setDownloadedMb(0);
     setPhase('downloading');
 
-    // Trigger download in system Download Manager / Internet Download Manager
-    triggerSystemDownload(
-      `/downloads/${targetFilename}`,
-      targetFilename,
-      `AG File Manager v${newVersion}`
-    );
+    try {
+      const response = await fetch(`/downloads/${targetFilename}`);
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      const contentLength = response.headers.get('content-length');
+      const total = contentLength ? parseInt(contentLength, 10) : 4509779;
 
-    clearTimers();
-    let current = 0;
-
-    // Simulates live DownloadManager query progress
-    timerRef.current = window.setInterval(() => {
-      current = Math.min(TOTAL_APK_MB, current + 0.18);
-      setDownloadedMb(current);
-
-      if (current >= TOTAL_APK_MB) {
-        clearTimers();
-
-        if (scenario === 'corrupted_apk') {
-          setErrorMessage(
-            'Downloaded APK package failed integrity verification. Please delete and retry.'
-          );
-          setPhase('error');
-          return;
-        }
-
-        // Save directly into /storage/emulated/0/Download/ (Internal Storage -> Download)
-        onSaveApkToPublicDownloads(targetFilename, TOTAL_APK_BYTES);
-
-        if (scenario === 'permission_required') {
-          setPhase('permission_prompt');
-        } else {
-          setPhase('installer_confirm');
-        }
+      const reader = response.body?.getReader();
+      if (!reader) {
+        triggerSystemDownload(`/downloads/${targetFilename}`, targetFilename, `AG File Manager v${newVersion}`);
+        onSaveApkToPublicDownloads(targetFilename, total);
+        setPhase('installer_confirm');
+        return;
       }
-    }, 100);
+
+      let receivedLength = 0;
+      const chunks: Uint8Array[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        receivedLength += value.length;
+        setDownloadedMb(receivedLength / (1024 * 1024));
+      }
+
+      const blob = new Blob(chunks as BlobPart[], { type: 'application/vnd.android.package-archive' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = targetFilename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+
+      onSaveApkToPublicDownloads(targetFilename, receivedLength || total);
+
+      if (scenario === 'permission_required') {
+        setPhase('permission_prompt');
+      } else {
+        setPhase('installer_confirm');
+      }
+    } catch (e) {
+      triggerSystemDownload(`/downloads/${targetFilename}`, targetFilename, `AG File Manager v${newVersion}`);
+      onSaveApkToPublicDownloads(targetFilename, 4509779);
+      setPhase('installer_confirm');
+    }
   };
 
   const handleConfirmInstall = () => {
