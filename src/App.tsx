@@ -1868,9 +1868,7 @@ export default function App() {
       <input
         ref={folderScanInputRef}
         type="file"
-        // @ts-expect-error webkitdirectory is standard in HTML5 directory pickers
-        webkitdirectory=""
-        directory=""
+        {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
         multiple
         className="hidden"
         onChange={(e) => {
