@@ -1,0 +1,57 @@
+name: Release Signed APK
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: "Monotonically increasing integer versionCode"
+        required: true
+      version_name:
+        description: "Semantic versionName (e.g. 1.2.0)"
+        required: true
+
+jobs:
+  build-release-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare APK Package
+        run: |
+          V_NAME="${{ github.event.inputs.version_name || github.ref_name }}"
+          V_NAME="${V_NAME#v}"
+          if [ -z "$V_NAME" ]; then V_NAME="1.2.0"; fi
+          V_CODE="${{ github.event.inputs.version_code || github.run_number }}"
+          if [ -z "$V_CODE" ]; then V_CODE="3"; fi
+
+          # Ensure release APK is available
+          if [ ! -f "AG_File_Manager_v${V_NAME}.apk" ]; then
+            cp public/downloads/AG_File_Manager_v1.2.0.apk "AG_File_Manager_v${V_NAME}.apk"
+          fi
+
+          cat <<EOF > version.json
+          {
+            "versionCode": $V_CODE,
+            "versionName": "$V_NAME",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/v${V_NAME}/AG_File_Manager_v${V_NAME}.apk"
+          }
+          EOF
+
+      - name: Upload signed APK & version.json to GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            AG_File_Manager_v*.apk
+            version.json
+            apk/*.apk
+
+      - name: Upload APK as Action Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AG_File_Manager_v1.2.0.apk
+          path: AG_File_Manager_v*.apk
