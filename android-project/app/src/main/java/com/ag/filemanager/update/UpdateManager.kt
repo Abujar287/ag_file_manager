@@ -1,0 +1,392 @@
+package com.ag.filemanager.update
+
+import android.Manifest
+import android.app.Activity
+import android.app.AlertDialog
+import android.app.DownloadManager
+import android.content.ContentUris
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import android.provider.Settings
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import com.ag.filemanager.BuildConfig
+import com.ag.filemanager.R
+import org.json.JSONObject
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
+import java.util.concurrent.Executors
+
+data class UpdateInfo(
+    val versionCode: Int,
+    val versionName: String,
+    val apkUrl: String
+)
+
+class UpdateManager(
+    private val activity: Activity,
+    private val manifestUrl: String,
+    private val onRequestInstallPermission: (Intent) -> Unit,
+    private val onRequestStoragePermission: () -> Unit
+) {
+    private val ioExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingApkUri: Uri? = null
+    private var pendingDownloadStart: (() -> Unit)? = null
+    private var pollRunnable: Runnable? = null
+
+    fun checkForUpdate() {
+        if (!isNetworkAvailable()) {
+            showSimpleError("No internet connection. Please check your network and try again.")
+            return
+        }
+
+        ioExecutor.execute {
+            val result = fetchUpdateManifest()
+            mainHandler.post {
+                result.onSuccess { info ->
+                    if (info.versionCode > BuildConfig.VERSION_CODE) {
+                        showMinimalUpdateDialog(info)
+                    } else {
+                        AlertDialog.Builder(activity)
+                            .setMessage(activity.getString(R.string.up_to_date))
+                            .setPositiveButton("OK", null)
+                            .show()
+                    }
+                }.onFailure { err ->
+                    showSimpleError(err.message ?: "Unable to check for updates right now.")
+                }
+            }
+        }
+    }
+
+    private fun showMinimalUpdateDialog(info: UpdateInfo) {
+        val view = LayoutInflater.from(activity).inflate(R.layout.dialog_update_available, null)
+        val currentVersionText = view.findViewById<TextView>(R.id.tvCurrentVersion)
+        val newVersionText = view.findViewById<TextView>(R.id.tvNewVersion)
+        val progressContainer = view.findViewById<View>(R.id.progressContainer)
+        val progressBar = view.findViewById<ProgressBar>(R.id.downloadProgressBar)
+        val progressStats = view.findViewById<TextView>(R.id.tvDownloadStats)
+        val errorText = view.findViewById<TextView>(R.id.tvDownloadError)
+
+        currentVersionText.text = "Current Version: ${BuildConfig.VERSION_NAME}"
+        newVersionText.text = "New Version: ${info.versionName}"
+        progressContainer.visibility = View.GONE
+        errorText.visibility = View.GONE
+
+        val dialog = AlertDialog.Builder(activity)
+            .setTitle(R.string.update_title)
+            .setView(view)
+            .setCancelable(false)
+            .setNegativeButton("Cancel") { d, _ ->
+                stopPolling()
+                d.dismiss()
+            }
+            .setPositiveButton("Download", null)
+            .create()
+
+        dialog.setOnShowListener {
+            val downloadBtn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            downloadBtn.setOnClickListener {
+                // On Android <= 9 (API <= 28), DownloadManager.setDestinationInExternalPublicDir requires WRITE_EXTERNAL_STORAGE
+                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                    ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    != PackageManager.PERMISSION_GRANTED
+                ) {
+                    pendingDownloadStart = {
+                        downloadBtn.isEnabled = false
+                        errorText.visibility = View.GONE
+                        progressContainer.visibility = View.VISIBLE
+                        startDownloadAndTrack(info, progressBar, progressStats, errorText, dialog)
+                    }
+                    onRequestStoragePermission()
+                    return@setOnClickListener
+                }
+
+                downloadBtn.isEnabled = false
+                errorText.visibility = View.GONE
+                progressContainer.visibility = View.VISIBLE
+                startDownloadAndTrack(info, progressBar, progressStats, errorText, dialog)
+            }
+        }
+
+        dialog.show()
+    }
+
+    fun onStoragePermissionResult(granted: Boolean) {
+        if (granted) {
+            pendingDownloadStart?.invoke()
+            pendingDownloadStart = null
+        } else {
+            showSimpleError("Storage permission is required to save APK to Download folder.")
+        }
+    }
+
+    private fun startDownloadAndTrack(
+        info: UpdateInfo,
+        progressBar: ProgressBar,
+        progressStats: TextView,
+        errorText: TextView,
+        dialog: AlertDialog
+    ) {
+        val fileName = "AG_File_Manager_v${info.versionName}.apk"
+        removeExistingApkInPublicDownloads(fileName)
+
+        val downloadManager = activity.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val request = DownloadManager.Request(Uri.parse(info.apkUrl))
+            .setTitle("AG File Manager v${info.versionName}")
+            .setDescription("Downloading update package")
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE)
+            .setMimeType("application/vnd.android.package-archive")
+            // Saves directly into /storage/emulated/0/Download/<fileName>
+            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+            .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
+
+        val downloadId = try {
+            downloadManager.enqueue(request)
+        } catch (e: Exception) {
+            errorText.text = "Download failed to start: ${e.localizedMessage}"
+            errorText.visibility = View.VISIBLE
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+            return
+        }
+
+        stopPolling()
+        val runner = object : Runnable {
+            override fun run() {
+                val query = DownloadManager.Query().setFilterById(downloadId)
+                val cursor = downloadManager.query(query)
+                var keepPolling = true
+
+                cursor?.use { c ->
+                    if (c.moveToFirst()) {
+                        val status = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                        val downloaded = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                        val total = c.getLong(c.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+
+                        if (total > 0L) {
+                            val percent = ((downloaded * 100L) / total).toInt().coerceIn(0, 100)
+                            val dlMb = downloaded / (1024.0 * 1024.0)
+                            val totalMb = total / (1024.0 * 1024.0)
+                            progressBar.isIndeterminate = false
+                            progressBar.progress = percent
+                            progressStats.text = String.format(
+                                Locale.US,
+                                "%d%% — %.1f MB / %.1f MB",
+                                percent,
+                                dlMb,
+                                totalMb
+                            )
+                        } else {
+                            progressBar.isIndeterminate = true
+                            val dlMb = downloaded / (1024.0 * 1024.0)
+                            progressStats.text = String.format(Locale.US, "%.1f MB downloaded", dlMb)
+                        }
+
+                        when (status) {
+                            DownloadManager.STATUS_SUCCESSFUL -> {
+                                keepPolling = false
+                                val localUriStr = c.getString(c.getColumnIndexOrThrow(DownloadManager.COLUMN_LOCAL_URI))
+                                dialog.dismiss()
+                                resolveAndPromptInstall(downloadManager, downloadId, localUriStr, fileName)
+                            }
+                            DownloadManager.STATUS_FAILED -> {
+                                keepPolling = false
+                                val reason = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                                errorText.text = mapDownloadFailure(reason)
+                                errorText.visibility = View.VISIBLE
+                                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = true
+                            }
+                        }
+                    }
+                }
+
+                if (keepPolling) {
+                    mainHandler.postDelayed(this, 250L)
+                }
+            }
+        }
+        pollRunnable = runner
+        mainHandler.post(runner)
+    }
+
+    private fun removeExistingApkInPublicDownloads(fileName: String) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val projection = arrayOf(MediaStore.Downloads._ID)
+                val selection = "${MediaStore.Downloads.DISPLAY_NAME} = ?"
+                activity.contentResolver.query(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    projection,
+                    selection,
+                    arrayOf(fileName),
+                    null
+                )?.use { cursor ->
+                    while (cursor.moveToNext()) {
+                        val id = cursor.getLong(0)
+                        val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
+                        activity.contentResolver.delete(uri, null, null)
+                    }
+                }
+            } else {
+                val publicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val existing = File(publicDir, fileName)
+                if (existing.exists()) existing.delete()
+            }
+        } catch (_: Exception) {
+            // Safe fallback if previous file is owned by another UID
+        }
+    }
+
+    private fun resolveAndPromptInstall(
+        downloadManager: DownloadManager,
+        downloadId: Long,
+        localUriStr: String?,
+        fallbackFileName: String
+    ) {
+        val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val localPath = localUriStr?.let { Uri.parse(it).path }
+        val apkFile = localPath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0L }
+            ?: File(publicDownloads, fallbackFileName).takeIf { it.exists() && it.length() > 0L }
+
+        val contentUri: Uri? = when {
+            apkFile != null -> FileProvider.getUriForFile(
+                activity,
+                "${BuildConfig.APPLICATION_ID}.fileprovider",
+                apkFile
+            )
+            else -> downloadManager.getUriForDownloadedFile(downloadId)
+        }
+
+        if (contentUri == null) {
+            showSimpleError("Downloaded APK could not be located in Download folder.")
+            return
+        }
+
+        if (apkFile != null) {
+            val archiveInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                activity.packageManager.getPackageArchiveInfo(
+                    apkFile.absolutePath,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                activity.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
+            }
+
+            if (archiveInfo == null || archiveInfo.packageName != BuildConfig.APPLICATION_ID) {
+                showSimpleError("Downloaded package is corrupted or mismatched. Please retry.")
+                return
+            }
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !activity.packageManager.canRequestPackageInstalls()) {
+            pendingApkUri = contentUri
+            AlertDialog.Builder(activity)
+                .setTitle("Install Permission Required")
+                .setMessage("Allow AG File Manager to install updates from downloaded APK files.")
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Allow") { _, _ ->
+                    val intent = Intent(
+                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:${activity.packageName}")
+                    )
+                    onRequestInstallPermission(intent)
+                }
+                .show()
+            return
+        }
+
+        launchApkInstaller(contentUri)
+    }
+
+    fun resumePendingInstallIfGranted() {
+        val uri = pendingApkUri ?: return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || activity.packageManager.canRequestPackageInstalls()) {
+            pendingApkUri = null
+            launchApkInstaller(uri)
+        }
+    }
+
+    private fun launchApkInstaller(apkUri: Uri) {
+        val installIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        try {
+            activity.startActivity(installIntent)
+        } catch (e: Exception) {
+            showSimpleError("Unable to open package installer: ${e.localizedMessage}")
+        }
+    }
+
+    private fun stopPolling() {
+        pollRunnable?.let { mainHandler.removeCallbacks(it) }
+        pollRunnable = null
+    }
+
+    private fun fetchUpdateManifest(): Result<UpdateInfo> {
+        return try {
+            val conn = (URL(manifestUrl).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 8000
+                readTimeout = 8000
+                requestMethod = "GET"
+            }
+            if (conn.responseCode !in 200..299) {
+                return Result.failure(IllegalStateException("Update server returned HTTP ${conn.responseCode}"))
+            }
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = JSONObject(body)
+            Result.success(
+                UpdateInfo(
+                    versionCode = json.getInt("versionCode"),
+                    versionName = json.getString("versionName"),
+                    apkUrl = json.getString("apkUrl")
+                )
+            )
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun mapDownloadFailure(reason: Int): String = when (reason) {
+        DownloadManager.ERROR_INSUFFICIENT_SPACE -> "Not enough storage space in Download folder."
+        DownloadManager.ERROR_CANNOT_RESUME,
+        DownloadManager.ERROR_HTTP_DATA_ERROR -> "Network interrupted while downloading APK."
+        DownloadManager.ERROR_FILE_ERROR -> "Cannot write APK to /storage/emulated/0/Download/."
+        else -> "Download failed (code $reason). Please try again."
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val cm = activity.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun showSimpleError(message: String) {
+        AlertDialog.Builder(activity)
+            .setTitle("Update Error")
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show()
+    }
+}
