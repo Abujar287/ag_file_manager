@@ -6,6 +6,7 @@ import android.app.DownloadManager
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -686,6 +687,152 @@ class MainActivity : Activity() {
                     put("requestId", requestId)
                     put("items", items)
                 })
+            }
+        }
+
+        private fun getOrSaveAppIconUri(packageName: String, appInfo: ApplicationInfo): String? {
+            return try {
+                val iconDir = File(cacheDir, "app_icons")
+                if (!iconDir.exists()) iconDir.mkdirs()
+                val iconFile = File(iconDir, "${packageName.replace('/', '_')}.png")
+                if (iconFile.exists() && iconFile.length() > 0L) {
+                    return Uri.fromFile(iconFile).toString()
+                }
+                val drawable = packageManager.getApplicationIcon(appInfo)
+                val size = 96
+                val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bmp)
+                drawable.setBounds(0, 0, size, size)
+                drawable.draw(canvas)
+                FileOutputStream(iconFile).use { fos ->
+                    bmp.compress(Bitmap.CompressFormat.PNG, 90, fos)
+                }
+                bmp.recycle()
+                if (iconFile.exists() && iconFile.length() > 0L) Uri.fromFile(iconFile).toString() else null
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        private fun buildInstalledAppsJsonArray(): JSONArray {
+            val arr = JSONArray()
+            val pm = packageManager
+            val packages = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getInstalledPackages(0)
+            }
+
+            val items = mutableListOf<Pair<String, JSONObject>>()
+            for (pkg in packages) {
+                val appInfo = pkg.applicationInfo ?: continue
+                val isSystem = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                val launchable = pm.getLaunchIntentForPackage(pkg.packageName) != null
+                // Include all user-installed apps plus launchable system apps
+                if (isSystem && !launchable) continue
+
+                val label = try {
+                    pm.getApplicationLabel(appInfo).toString().ifBlank { pkg.packageName }
+                } catch (_: Exception) {
+                    pkg.packageName
+                }
+                val apkFile = appInfo.sourceDir?.let { File(it) }
+                val apkSize = if (apkFile != null && apkFile.exists()) apkFile.length() else 0L
+                val iconUri = getOrSaveAppIconUri(pkg.packageName, appInfo)
+
+                val obj = JSONObject().apply {
+                    put("packageName", pkg.packageName)
+                    put("name", label)
+                    put("versionName", pkg.versionName ?: "")
+                    put("size", apkSize)
+                    put("modifiedAt", pkg.lastUpdateTime)
+                    put("apkPath", appInfo.sourceDir ?: "")
+                    if (iconUri != null) put("iconUrl", iconUri)
+                    put("isSystemApp", isSystem)
+                }
+                items.add(label.lowercase() to obj)
+            }
+            items.sortBy { it.first }
+            for ((_, obj) in items) arr.put(obj)
+            return arr
+        }
+
+        @JavascriptInterface
+        fun getInstalledApps(): String {
+            return try {
+                buildInstalledAppsJsonArray().toString()
+            } catch (_: Exception) {
+                "[]"
+            }
+        }
+
+        @JavascriptInterface
+        fun getInstalledAppsAsync(requestId: String) {
+            ioExecutor.execute {
+                val apps = try {
+                    buildInstalledAppsJsonArray()
+                } catch (_: Exception) {
+                    JSONArray()
+                }
+                dispatchWebEvent("android_installed_apps_result", JSONObject().apply {
+                    put("requestId", requestId)
+                    put("apps", apps)
+                })
+            }
+        }
+
+        @JavascriptInterface
+        fun launchApp(packageName: String): Boolean {
+            return try {
+                val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return false
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                runOnUiThread {
+                    try {
+                        startActivity(intent)
+                    } catch (_: Exception) {
+                    }
+                }
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        @JavascriptInterface
+        fun openAppDetails(packageName: String): Boolean {
+            return try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                runOnUiThread {
+                    try {
+                        startActivity(intent)
+                    } catch (_: Exception) {
+                    }
+                }
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        @JavascriptInterface
+        fun uninstallApp(packageName: String): Boolean {
+            return try {
+                val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                runOnUiThread {
+                    try {
+                        startActivity(intent)
+                    } catch (_: Exception) {
+                    }
+                }
+                true
+            } catch (_: Exception) {
+                false
             }
         }
 

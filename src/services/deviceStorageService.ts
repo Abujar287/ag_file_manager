@@ -2,6 +2,7 @@
 // Interfaces between the React UI and either the native Android Bridge or browser File APIs.
 
 import { APP_VERSION_CODE, APP_VERSION_NAME } from '../versionInfo';
+import { InstalledApp } from '../types/fileManager';
 
 export interface DeviceStorageStats {
   internal: {
@@ -60,6 +61,11 @@ export interface AndroidBridgeInterface {
   openUrlInBrowser?: (url: string) => boolean;
   shareFile?: (path: string) => void;
   shareFiles?: (pathsJson: string) => void;
+  getInstalledApps?: () => string;
+  getInstalledAppsAsync?: (requestId: string) => void;
+  launchApp?: (packageName: string) => boolean;
+  openAppDetails?: (packageName: string) => boolean;
+  uninstallApp?: (packageName: string) => boolean;
 }
 
 declare global {
@@ -324,3 +330,41 @@ export function exitApplication(): void {
     // window.close() might be blocked by browser if not opened via script
   }
 }
+
+export function launchInstalledApp(packageName: string): boolean {
+  const bridge = getNativeBridge();
+  if (bridge && typeof bridge.launchApp === 'function') {
+    try {
+      return Boolean(bridge.launchApp(packageName));
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export function openInstalledAppDetails(packageName: string): boolean {
+  const bridge = getNativeBridge();
+  if (bridge && typeof bridge.openAppDetails === 'function') {
+    try {
+      return Boolean(bridge.openAppDetails(packageName));
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export function uninstallInstalledApp(packageName: string): boolean {
+  const bridge = getNativeBridge();
+  if (bridge && typeof bridge.uninstallApp === 'function') {
+    try {
+      return Boolean(bridge.uninstallApp(packageName));
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+export type { InstalledApp };

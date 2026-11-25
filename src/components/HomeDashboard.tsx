@@ -12,6 +12,7 @@ import {
   MemoryStick,
   Music,
   Package,
+  PackageCheck,
   Sparkles,
   Trash2,
   Video,
@@ -28,6 +29,7 @@ import { DeviceStorageStats } from '../services/deviceStorageService';
 
 interface HomeDashboardProps {
   files: FileNode[];
+  installedAppsCount?: number;
   sdCardMounted: boolean;
   storageStats?: DeviceStorageStats | null;
   hasPermission?: boolean;
@@ -189,6 +191,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
 
 export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
   files,
+  installedAppsCount = 0,
   sdCardMounted,
   storageStats,
   hasPermission = true,
@@ -229,7 +232,8 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
       images: 0,
       videos: 0,
       audio: 0,
-      apps: 0,
+      apps: installedAppsCount,
+      apk_files: 0,
       new_files: 0,
       compressed: 0,
       documents: 0,
@@ -260,7 +264,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
           catCounts.audio++;
           break;
         case 'apk':
-          catCounts.apps++;
+          catCounts.apk_files++;
           break;
         case 'archive':
           catCounts.compressed++;
@@ -273,7 +277,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
     }
 
     return { internalFilesBytes: intBytes, sdFilesBytes: extBytes, counts: catCounts };
-  }, [files]);
+  }, [files, installedAppsCount]);
 
   // Live dynamic storage capacity
   const finalInternalTotal = storageStats?.internal?.totalBytes || INTERNAL_TOTAL_BYTES;
@@ -331,6 +335,12 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
       label: 'Apps',
       icon: <Package size={28} strokeWidth={1.9} />,
       squircleBg: 'bg-[#11C72A]',
+    },
+    {
+      id: 'apk_files',
+      label: 'APK Files',
+      icon: <PackageCheck size={28} strokeWidth={1.9} />,
+      squircleBg: 'bg-[#059669]',
     },
     {
       id: 'new_files',
@@ -433,12 +443,12 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
         </div>
       </section>
 
-      {/* 3. Categories Section (4x2 Grid) */}
+      {/* 3. Categories Section (3x3 Grid) */}
       <section aria-label="Categories">
         <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
           Categories
         </h3>
-        <div className="grid grid-cols-4 gap-2 sm:gap-3 py-0.5">
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 py-0.5">
           {categories.map((cat) => (
             <button
               key={cat.id}

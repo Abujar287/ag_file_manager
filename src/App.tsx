@@ -7,6 +7,7 @@ import {
   CategoryType,
   ClipboardState,
   FileNode,
+  InstalledApp,
   SortBy,
   SortOrder,
   TabWindow,
@@ -20,6 +21,8 @@ import { NavigationDrawer } from './components/NavigationDrawer';
 import { HomeDashboard } from './components/HomeDashboard';
 import { FileBrowser } from './components/FileBrowser';
 import { AnalyzerView } from './components/AnalyzerView';
+import { InstalledAppsView } from './components/InstalledAppsView';
+import { MoveTargetModal } from './components/MoveTargetModal';
 import { BatchRenameDialog } from './components/BatchRenameDialog';
 import { UpdateModal } from './components/UpdateModal';
 import { ViewSortModal } from './components/ViewSortModal';
@@ -42,6 +45,22 @@ import { APP_VERSION_NAME } from './versionInfo';
 
 const LATEST_VERSION_NAME = APP_VERSION_NAME;
 
+function screensEqual(a: ActiveScreen, b: ActiveScreen): boolean {
+  if (a.type !== b.type) return false;
+  switch (a.type) {
+    case 'home':
+    case 'settings':
+    case 'about':
+      return true;
+    case 'folder':
+      return b.type === 'folder' && a.folderId === b.folderId;
+    case 'category':
+      return b.type === 'category' && a.category === b.category;
+    case 'analyzer':
+      return b.type === 'analyzer' && a.tool === b.tool;
+  }
+}
+
 function getScreenTitle(screen: ActiveScreen, files: FileNode[]): string {
   switch (screen.type) {
     case 'home':
@@ -55,7 +74,8 @@ function getScreenTitle(screen: ActiveScreen, files: FileNode[]): string {
         images: 'Images',
         videos: 'Videos',
         audio: 'Audio',
-        apps: 'Apps',
+        apps: 'Installed Apps',
+        apk_files: 'APK Files',
         new_files: 'New Files',
         compressed: 'Compressed',
         documents: 'Documents',
@@ -175,7 +195,7 @@ export default function App() {
   const fileUploadInputRef = useRef<HTMLInputElement>(null);
 
   const [tabs, setTabs] = useState<TabWindow[]>([
-    { id: 'tab_1', title: 'Home', screen: { type: 'home' } },
+    { id: 'tab_1', title: 'Home', screen: { type: 'home' }, backStack: [] },
   ]);
   const [activeTabId, setActiveTabId] = useState('tab_1');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -194,11 +214,15 @@ export default function App() {
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
   const [newItemType, setNewItemType] = useState<'folder' | 'text' | 'file' | null>(null);
   const [renameTargetIds, setRenameTargetIds] = useState<string[] | null>(null);
+  const [moveTargetIds, setMoveTargetIds] = useState<string[] | null>(null);
   const [propertiesNodes, setPropertiesNodes] = useState<FileNode[] | null>(null);
   const [viewingFile, setViewingFile] = useState<FileNode | null>(null);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [viewSortModalOpen, setViewSortModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
+  const [installedAppsLoading, setInstalledAppsLoading] = useState(false);
 
   // Left-to-right swipe navigation state (DOM-driven to avoid 60fps full-tree re-renders)
   const swipeIndicatorRef = useRef<HTMLDivElement>(null);
@@ -265,7 +289,7 @@ export default function App() {
           if (tab.screen.type === 'folder') {
             const path = getNodePath(tab.screen.folderId, files);
             if (path.startsWith('/storage/sdcard1')) {
-              return { ...tab, title: 'Home', screen: { type: 'home' } };
+              return { ...tab, title: 'Home', screen: { type: 'home' }, backStack: [] };
             }
           }
           return tab;
@@ -304,6 +328,8 @@ export default function App() {
   const pendingDirRequestsRef = useRef<Map<string, string>>(new Map());
   const pendingCategoryReqRef = useRef<string | null>(null);
   const lastCategoryScanAtRef = useRef<number>(0);
+  const pendingAppsReqRef = useRef<string | null>(null);
+  const lastAppsScanAtRef = useRef<number>(0);
 
   const loadNativeFolder = useCallback((folderId: string, explicitPath?: string) => {
     const bridge = getNativeBridge();
@@ -388,6 +414,44 @@ export default function App() {
     }
   }, [mergeNativeNodes]);
 
+  const loadInstalledApps = useCallback((force = false) => {
+    const bridge = getNativeBridge();
+    if (!bridge) return;
+    const now = Date.now();
+    if (!force && lastAppsScanAtRef.current > 0 && now - lastAppsScanAtRef.current < 30000) {
+      return;
+    }
+    lastAppsScanAtRef.current = now;
+
+    if (typeof bridge.getInstalledAppsAsync === 'function') {
+      const reqId = `apps_${now}`;
+      pendingAppsReqRef.current = reqId;
+      setInstalledAppsLoading(true);
+      try {
+        bridge.getInstalledAppsAsync(reqId);
+        return;
+      } catch {
+        setInstalledAppsLoading(false);
+      }
+    }
+    if (typeof bridge.getInstalledApps === 'function') {
+      setInstalledAppsLoading(true);
+      window.setTimeout(() => {
+        try {
+          const raw = bridge.getInstalledApps!();
+          const parsed = raw ? (JSON.parse(raw) as InstalledApp[]) : [];
+          if (Array.isArray(parsed)) {
+            setInstalledApps(parsed);
+          }
+        } catch {
+          // ignore
+        } finally {
+          setInstalledAppsLoading(false);
+        }
+      }, 30);
+    }
+  }, []);
+
   const refreshNativeDeviceState = async () => {
     const granted = await checkStoragePermissionGranted();
     setHasStoragePermission(granted);
@@ -418,6 +482,8 @@ export default function App() {
     if (sdRootPath) {
       loadNativeFolder('sd_root', sdRootPath);
     }
+
+    loadInstalledApps(true);
 
     if (granted) {
       triggerAsyncCategoryScan(true);
@@ -456,21 +522,31 @@ export default function App() {
         mergeNativeNodes(null, detail.items, false);
       }
     };
+    const onInstalledAppsResult = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as {
+        requestId?: string;
+        apps?: InstalledApp[];
+      };
+      if (!detail?.requestId || detail.requestId !== pendingAppsReqRef.current) return;
+      setInstalledAppsLoading(false);
+      if (Array.isArray(detail.apps)) {
+        setInstalledApps(detail.apps);
+      }
+    };
 
     window.addEventListener('android_permission_result', onPermissionEvent);
     window.addEventListener('android_dir_result', onDirResult);
     window.addEventListener('android_categories_result', onCategoriesResult);
+    window.addEventListener('android_installed_apps_result', onInstalledAppsResult);
     return () => {
       window.removeEventListener('android_permission_result', onPermissionEvent);
       window.removeEventListener('android_dir_result', onDirResult);
       window.removeEventListener('android_categories_result', onCategoriesResult);
+      window.removeEventListener('android_installed_apps_result', onInstalledAppsResult);
     };
   }, []);
 
-  const navigateInActiveTab = useCallback((screen: ActiveScreen) => {
-    setSearchOpen(false);
-    setSearchQuery('');
-
+  const syncScreenSideEffects = useCallback((screen: ActiveScreen) => {
     const currentFiles = filesRef.current;
     if (screen.type === 'folder') {
       if (isRunningInAndroidApp()) {
@@ -485,19 +561,44 @@ export default function App() {
         ].slice(0, 12));
       }
     } else if (screen.type === 'category' && isRunningInAndroidApp()) {
-      triggerAsyncCategoryScan(false);
+      if (screen.category === 'apps') {
+        loadInstalledApps(false);
+      } else {
+        triggerAsyncCategoryScan(false);
+      }
     }
+  }, [loadNativeFolder, loadInstalledApps, triggerAsyncCategoryScan]);
 
+  const navigateInActiveTab = useCallback((screen: ActiveScreen) => {
+    setSearchOpen(false);
+    setSearchQuery('');
+    syncScreenSideEffects(screen);
+
+    const currentFiles = filesRef.current;
     const title = getScreenTitle(screen, currentFiles);
     const targetTabId = activeTabIdRef.current;
     setTabs((prev) =>
-      prev.map((t) => (t.id === targetTabId ? { ...t, title, screen } : t))
+      prev.map((t) => {
+        if (t.id !== targetTabId) return t;
+        if (screen.type === 'home') {
+          return { ...t, title, screen, backStack: [] };
+        }
+        if (screensEqual(t.screen, screen)) {
+          return { ...t, title, screen };
+        }
+        return {
+          ...t,
+          title,
+          screen,
+          backStack: [...t.backStack, t.screen],
+        };
+      })
     );
-  }, [loadNativeFolder, triggerAsyncCategoryScan]);
+  }, [syncScreenSideEffects]);
 
-  // Point 6: Hardware/System/Browser Back button logic:
-  // Non-home screens/folders navigate back towards Home;
-  // On Home screen, pressing back shows the Exit Confirmation Dialog!
+  // Step-by-step Back Navigation Stack:
+  // Any non-home segment returns to the previous screen in backStack until reaching Home;
+  // On Home screen, pressing Back shows Exit Confirmation Dialog!
   const handleBackAction = () => {
     if (exitConfirmOpen) {
       setExitConfirmOpen(false);
@@ -513,6 +614,10 @@ export default function App() {
     }
     if (propertiesNodes) {
       setPropertiesNodes(null);
+      return;
+    }
+    if (moveTargetIds) {
+      setMoveTargetIds(null);
       return;
     }
     if (viewSortModalOpen) {
@@ -541,17 +646,44 @@ export default function App() {
       return;
     }
 
-    if (activeScreen.type === 'folder') {
-      const currentFolder = files.find((f) => f.id === activeScreen.folderId);
-      if (currentFolder && currentFolder.parentId && currentFolder.parentId !== null) {
-        navigateInActiveTab({ type: 'folder', folderId: currentFolder.parentId });
+    if (activeScreen.type !== 'home') {
+      if (activeTab.backStack.length > 0) {
+        const prevScreen = activeTab.backStack[activeTab.backStack.length - 1];
+        const nextStack = activeTab.backStack.slice(0, -1);
+        syncScreenSideEffects(prevScreen);
+        const title = getScreenTitle(prevScreen, filesRef.current);
+        const targetTabId = activeTab.id;
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === targetTabId
+              ? {
+                  ...t,
+                  title,
+                  screen: prevScreen,
+                  backStack: prevScreen.type === 'home' ? [] : nextStack,
+                }
+              : t
+          )
+        );
         return;
       }
-      navigateInActiveTab({ type: 'home' });
-      return;
-    }
 
-    if (activeScreen.type !== 'home') {
+      if (activeScreen.type === 'folder') {
+        const currentFolder = files.find((f) => f.id === activeScreen.folderId);
+        if (currentFolder && currentFolder.parentId && currentFolder.parentId !== null) {
+          const parentScreen: ActiveScreen = { type: 'folder', folderId: currentFolder.parentId };
+          syncScreenSideEffects(parentScreen);
+          const title = getScreenTitle(parentScreen, filesRef.current);
+          const targetTabId = activeTab.id;
+          setTabs((prev) =>
+            prev.map((t) =>
+              t.id === targetTabId ? { ...t, title, screen: parentScreen, backStack: [] } : t
+            )
+          );
+          return;
+        }
+      }
+
       navigateInActiveTab({ type: 'home' });
       return;
     }
@@ -663,6 +795,7 @@ export default function App() {
       id,
       title: 'Internal',
       screen: { type: 'folder', folderId: 'internal_root' },
+      backStack: [{ type: 'home' }],
     };
     setTabs((prev) => [...prev, newTab]);
     setActiveTabId(id);
@@ -795,6 +928,57 @@ export default function App() {
     showToast(`Created ${name}`);
   };
 
+  const handleMoveFilesToFolder = useCallback((ids: string[], targetFolderId: string) => {
+    const currentFiles = filesRef.current;
+    const targetDir = getNodePath(targetFolderId, currentFiles);
+    const targetFolderNode = currentFiles.find((n) => n.id === targetFolderId);
+    const bridge = getNativeBridge();
+
+    if (bridge && typeof bridge.copyOrMovePaths === 'function') {
+      const sourcePaths = ids
+        .map((id) => currentFiles.find((n) => n.id === id)?.realPath)
+        .filter((p): p is string => Boolean(p));
+
+      if (sourcePaths.length > 0 && targetDir) {
+        const ok = bridge.copyOrMovePaths(JSON.stringify(sourcePaths), targetDir, true);
+        setMoveTargetIds(null);
+        if (ok) {
+          const now = Date.now();
+          setFiles((prev) =>
+            prev.map((n) => {
+              if (!ids.includes(n.id) || n.id === targetFolderId) return n;
+              const nextRealPath = `${targetDir.replace(/\/$/, '')}/${n.name}`;
+              return {
+                ...n,
+                parentId: targetFolderId,
+                realPath: nextRealPath,
+                modifiedAt: now,
+              };
+            })
+          );
+          loadNativeFolder(targetFolderId, targetDir);
+          showToast(
+            `Moved ${sourcePaths.length} item(s) to ${targetFolderNode?.name || 'folder'}`
+          );
+        } else {
+          showToast('Move failed');
+        }
+        return;
+      }
+    }
+
+    const now = Date.now();
+    setFiles((prev) =>
+      prev.map((n) =>
+        ids.includes(n.id) && n.id !== targetFolderId
+          ? { ...n, parentId: targetFolderId, modifiedAt: now }
+          : n
+      )
+    );
+    setMoveTargetIds(null);
+    showToast(`Moved ${ids.length} item(s) to ${targetFolderNode?.name || 'folder'}`);
+  }, [loadNativeFolder, showToast]);
+
   const handlePaste = (targetFolderId: string) => {
     if (!clipboard) return;
     const bridge = getNativeBridge();
@@ -804,16 +988,33 @@ export default function App() {
         .filter((p): p is string => Boolean(p));
       const targetDir = getNodePath(targetFolderId, files);
       if (sourcePaths.length > 0 && targetDir) {
+        const isCut = clipboard.mode === 'cut';
+        const movedIds = clipboard.itemIds;
         const ok = bridge.copyOrMovePaths(
           JSON.stringify(sourcePaths),
           targetDir,
-          clipboard.mode === 'cut'
+          isCut
         );
         setClipboard(null);
         if (ok) {
+          if (isCut) {
+            const now = Date.now();
+            setFiles((prev) =>
+              prev.map((n) =>
+                movedIds.includes(n.id) && n.id !== targetFolderId
+                  ? {
+                      ...n,
+                      parentId: targetFolderId,
+                      realPath: `${targetDir.replace(/\/$/, '')}/${n.name}`,
+                      modifiedAt: now,
+                    }
+                  : n
+              )
+            );
+          }
           loadNativeFolder(targetFolderId, targetDir);
           showToast(
-            `${clipboard.mode === 'cut' ? 'Moved' : 'Copied'} ${sourcePaths.length} item(s)`
+            `${isCut ? 'Moved' : 'Copied'} ${sourcePaths.length} item(s)`
           );
         } else {
           showToast('Operation failed');
@@ -928,6 +1129,22 @@ export default function App() {
           bridge.renamePath(target.realPath, r.newName);
         }
       }
+      const renameMap = new Map(renames.map((r) => [r.id, r.newName]));
+      const now = Date.now();
+      setFiles((prev) =>
+        prev.map((n) => {
+          const nextName = renameMap.get(n.id);
+          if (!nextName) return n;
+          const parentPath = n.realPath ? n.realPath.replace(/\/[^/]+$/, '') : '';
+          return {
+            ...n,
+            name: nextName,
+            kind: n.kind === 'folder' ? 'folder' : inferFileKind(nextName),
+            realPath: parentPath ? `${parentPath}/${nextName}` : n.realPath,
+            modifiedAt: now,
+          };
+        })
+      );
       setRenameTargetIds(null);
       if (activeScreen.type === 'folder') {
         loadNativeFolder(activeScreen.folderId);
@@ -986,6 +1203,40 @@ export default function App() {
     showToast(`Ready to share: ${names}`);
   }, [showToast]);
 
+  const handleBackupAppApk = useCallback((app: InstalledApp) => {
+    const bridge = getNativeBridge();
+    if (!bridge || !app.apkPath || typeof bridge.copyOrMovePaths !== 'function') {
+      showToast('APK export is available inside Android app');
+      return;
+    }
+    const internalRoot =
+      storageStatsRef.current?.internal?.rootPath || '/storage/emulated/0';
+    const downloadDir = `${internalRoot.replace(/\/$/, '')}/Download`;
+    const ok = bridge.copyOrMovePaths(JSON.stringify([app.apkPath]), downloadDir, false);
+    if (!ok) {
+      showToast(`Failed to backup ${app.name}`);
+      return;
+    }
+    const srcName = app.apkPath.split('/').pop() || 'base.apk';
+    const safeBase = app.name.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || app.packageName;
+    const safeVer = (app.versionName || '1.0').replace(/[^a-zA-Z0-9._-]+/g, '_');
+    const targetName = `${safeBase}_v${safeVer}.apk`;
+    if (srcName !== targetName && typeof bridge.renamePath === 'function') {
+      bridge.renamePath(`${downloadDir}/${srcName}`, targetName);
+    }
+    triggerAsyncCategoryScan(true);
+    showToast(`Backed up ${targetName} to Download`);
+  }, [showToast, triggerAsyncCategoryScan]);
+
+  const handleShareAppApk = useCallback((app: InstalledApp) => {
+    const bridge = getNativeBridge();
+    if (bridge && app.apkPath && typeof bridge.shareFiles === 'function') {
+      bridge.shareFiles(JSON.stringify([app.apkPath]));
+    } else {
+      showToast('Share APK is available on Android device');
+    }
+  }, [showToast]);
+
   const handleToggleFavourite = useCallback((ids: string[]) => {
     setFiles((prev) =>
       prev.map((n) => (ids.includes(n.id) ? { ...n, favourite: !n.favourite } : n))
@@ -1023,15 +1274,35 @@ export default function App() {
     showToast(`Compressed into ${zipName}`);
   };
 
-  const handleCleanEmptyFolders = (ids: string[]) => {
+  const handleCleanEmptyFolders = useCallback((ids: string[]) => {
+    const currentFiles = filesRef.current;
+    const bridge = getNativeBridge();
+    if (bridge && typeof bridge.deletePaths === 'function') {
+      const paths = ids
+        .map((id) => currentFiles.find((n) => n.id === id)?.realPath)
+        .filter((p): p is string => Boolean(p));
+      if (paths.length > 0) {
+        bridge.deletePaths(JSON.stringify(paths), false);
+      }
+    }
     setFiles((prev) => prev.filter((n) => !ids.includes(n.id)));
     showToast(`Removed ${ids.length} empty folder(s)`);
-  };
+  }, [showToast]);
 
-  const handleClearAppCache = (ids: string[]) => {
+  const handleClearAppCache = useCallback((ids: string[]) => {
+    const currentFiles = filesRef.current;
+    const bridge = getNativeBridge();
+    if (bridge && typeof bridge.deletePaths === 'function') {
+      const paths = ids
+        .map((id) => currentFiles.find((n) => n.id === id)?.realPath)
+        .filter((p): p is string => Boolean(p));
+      if (paths.length > 0) {
+        bridge.deletePaths(JSON.stringify(paths), false);
+      }
+    }
     setFiles((prev) => prev.filter((n) => !ids.includes(n.id)));
     showToast('App cache cleared');
-  };
+  }, [showToast]);
 
   const handleSaveTextFile = (id: string, content: string) => {
     const bridge = getNativeBridge();
@@ -1232,13 +1503,16 @@ export default function App() {
     updateSwipeIndicator(0);
   }, [activeScreen.type, searchOpen, navigateInActiveTab, updateSwipeIndicator]);
 
+  const handleBackActionRef = useRef(handleBackAction);
+  handleBackActionRef.current = handleBackAction;
+
   const handleOpenFolderMemo = useCallback(
     (folderId: string) => navigateInActiveTab({ type: 'folder', folderId }),
     [navigateInActiveTab]
   );
-  const handleBackHomeMemo = useCallback(
-    () => navigateInActiveTab({ type: 'home' }),
-    [navigateInActiveTab]
+  const handleBackStepMemo = useCallback(
+    () => handleBackActionRef.current(),
+    []
   );
   const handleBackSearchMemo = useCallback(() => {
     setSearchOpen(false);
@@ -1251,6 +1525,14 @@ export default function App() {
   const handleOpenCategoryMemo = useCallback(
     (category: CategoryType) => navigateInActiveTab({ type: 'category', category }),
     [navigateInActiveTab]
+  );
+  const handleOpenApkFilesMemo = useCallback(
+    () => navigateInActiveTab({ type: 'category', category: 'apk_files' }),
+    [navigateInActiveTab]
+  );
+  const handleRefreshAppsMemo = useCallback(
+    () => loadInstalledApps(true),
+    [loadInstalledApps]
   );
   const handleRequestPermissionMemo = useCallback(() => setStoragePermissionOpen(true), []);
   const handleCopyMemo = useCallback(
@@ -1269,6 +1551,7 @@ export default function App() {
   );
   const handleCancelClipboardMemo = useCallback(() => setClipboard(null), []);
   const handleRenameRequestMemo = useCallback((ids: string[]) => setRenameTargetIds(ids), []);
+  const handleMoveRequestMemo = useCallback((ids: string[]) => setMoveTargetIds(ids), []);
 
   return (
     <div
@@ -1423,6 +1706,7 @@ export default function App() {
           ) : activeScreen.type === 'home' ? (
             <HomeDashboard
               files={files}
+              installedAppsCount={installedApps.length}
               sdCardMounted={settings.sdCardMounted}
               storageStats={storageStats}
               hasPermission={hasStoragePermission}
@@ -1430,6 +1714,17 @@ export default function App() {
               onOpenFolder={handleOpenFolderMemo}
               onOpenTool={handleOpenToolMemo}
               onOpenCategory={handleOpenCategoryMemo}
+            />
+          ) : activeScreen.type === 'category' && activeScreen.category === 'apps' ? (
+            <InstalledAppsView
+              apps={installedApps}
+              loading={installedAppsLoading}
+              onBack={handleBackStepMemo}
+              onRefresh={handleRefreshAppsMemo}
+              onOpenApkFiles={handleOpenApkFilesMemo}
+              onBackupApk={handleBackupAppApk}
+              onShareApk={handleShareAppApk}
+              onShowToast={showToast}
             />
           ) : activeScreen.type === 'folder' || activeScreen.type === 'category' ? (
             <FileBrowser
@@ -1446,7 +1741,7 @@ export default function App() {
               sortBy={settings.sortBy}
               sortOrder={settings.sortOrder}
               clipboard={clipboard}
-              onBackHome={handleBackHomeMemo}
+              onBackHome={handleBackStepMemo}
               onOpenFolder={handleOpenFolderMemo}
               onOpenFile={handleOpenFile}
               onCopy={handleCopyMemo}
@@ -1467,11 +1762,16 @@ export default function App() {
               tool={activeScreen.tool}
               files={files}
               showThumbnails={settings.showThumbnails}
-              onSelectTool={(tool) => navigateInActiveTab({ type: 'analyzer', tool })}
-              onBackHome={() => navigateInActiveTab({ type: 'home' })}
-              onOpenFolder={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
+              onBackHome={handleBackStepMemo}
+              onOpenFolder={handleOpenFolderMemo}
               onOpenFile={handleOpenFile}
               onDeleteFiles={(ids) => handleDelete(ids, false)}
+              onCopyFiles={handleCopyMemo}
+              onCutFiles={handleCutMemo}
+              onMoveFiles={handleMoveRequestMemo}
+              onRenameRequest={handleRenameRequestMemo}
+              onShare={handleShare}
+              onShowProperties={setPropertiesNodes}
               onCleanEmptyFolders={handleCleanEmptyFolders}
               onClearAppCache={handleClearAppCache}
             />
@@ -1479,12 +1779,12 @@ export default function App() {
             <SettingsView
               settings={settings}
               onUpdateSettings={(patch) => setSettings((prev) => ({ ...prev, ...patch }))}
-              onBackHome={() => navigateInActiveTab({ type: 'home' })}
+              onBackHome={handleBackStepMemo}
             />
           ) : (
             <AboutView
               settings={settings}
-              onBackHome={() => navigateInActiveTab({ type: 'home' })}
+              onBackHome={handleBackStepMemo}
               onCheckUpdate={() => setUpdateModalOpen(true)}
             />
           )}
@@ -1517,6 +1817,24 @@ export default function App() {
           onConfirm={handleBatchRenameConfirm}
         />
       )}
+
+      <MoveTargetModal
+        open={Boolean(moveTargetIds && moveTargetIds.length > 0)}
+        itemCount={moveTargetIds?.length || 0}
+        files={files}
+        sdCardMounted={settings.sdCardMounted}
+        onBrowseFolder={(folderId) => {
+          if (isRunningInAndroidApp()) {
+            loadNativeFolder(folderId);
+          }
+        }}
+        onCancel={() => setMoveTargetIds(null)}
+        onConfirmMove={(targetFolderId) => {
+          if (moveTargetIds && moveTargetIds.length > 0) {
+            handleMoveFilesToFolder(moveTargetIds, targetFolderId);
+          }
+        }}
+      />
 
       <PropertiesDialog
         nodes={propertiesNodes}

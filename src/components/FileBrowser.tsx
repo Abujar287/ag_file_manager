@@ -77,7 +77,8 @@ const CATEGORY_TITLES: Record<CategoryType, string> = {
   images: 'Images',
   videos: 'Videos',
   audio: 'Audio',
-  apps: 'Apps (APK)',
+  apps: 'Installed Apps',
+  apk_files: 'APK Files',
   new_files: 'New Files',
   compressed: 'Compressed',
   documents: 'Documents',
@@ -389,6 +390,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
             case 'audio':
               return n.kind === 'audio';
             case 'apps':
+            case 'apk_files':
               return n.kind === 'apk';
             case 'new_files':
               return n.modifiedAt >= sevenDaysAgo;
@@ -585,38 +587,48 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
       {/* Path Bar */}
       <div className="px-4 sm:px-6 py-2.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
         {mode === 'folder' && folderId ? (
-          <nav
-            className="flex items-center gap-1 overflow-x-auto text-sm text-slate-600 dark:text-slate-300 min-w-0"
-            aria-label="Current path"
-          >
-            {folderAncestors.map((seg, idx) => (
-              <React.Fragment key={seg.id}>
-                {idx > 0 && (
-                  <span className="text-slate-400 dark:text-slate-500 select-none shrink-0">
-                    /
-                  </span>
-                )}
-                <button
-                  type="button"
-                  onClick={() => onOpenFolder(seg.id)}
-                  className={`px-1.5 py-1 rounded-lg whitespace-nowrap transition-colors ${
-                    idx === folderAncestors.length - 1
-                      ? 'font-semibold text-slate-900 dark:text-slate-100'
-                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  {seg.label}
-                </button>
-              </React.Fragment>
-            ))}
-          </nav>
+          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={onBackHome}
+              className="min-w-[34px] min-h-[34px] flex items-center justify-center rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+              aria-label="Back"
+            >
+              <ArrowLeft size={17} />
+            </button>
+            <nav
+              className="flex items-center gap-1 overflow-x-auto text-sm text-slate-600 dark:text-slate-300 min-w-0"
+              aria-label="Current path"
+            >
+              {folderAncestors.map((seg, idx) => (
+                <React.Fragment key={seg.id}>
+                  {idx > 0 && (
+                    <span className="text-slate-400 dark:text-slate-500 select-none shrink-0">
+                      /
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onOpenFolder(seg.id)}
+                    className={`px-1.5 py-1 rounded-lg whitespace-nowrap transition-colors ${
+                      idx === folderAncestors.length - 1
+                        ? 'font-semibold text-slate-900 dark:text-slate-100'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {seg.label}
+                  </button>
+                </React.Fragment>
+              ))}
+            </nav>
+          </div>
         ) : (
           <div className="flex items-center gap-2 min-w-0">
             <button
               type="button"
               onClick={onBackHome}
               className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
-              aria-label="Back to Home"
+              aria-label="Back"
             >
               <ArrowLeft size={18} />
             </button>

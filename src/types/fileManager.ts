@@ -29,10 +29,22 @@ export type CategoryType =
   | 'videos'
   | 'audio'
   | 'apps'
+  | 'apk_files'
   | 'new_files'
   | 'compressed'
   | 'documents'
   | 'recycle_bin';
+
+export interface InstalledApp {
+  packageName: string;
+  name: string;
+  versionName: string;
+  size: number;
+  modifiedAt: number;
+  apkPath: string;
+  iconUrl?: string;
+  isSystemApp: boolean;
+}
 
 export type AnalyzerToolType =
   | 'file_analyzer'
@@ -54,6 +66,7 @@ export interface TabWindow {
   id: string;
   title: string;
   screen: ActiveScreen;
+  backStack: ActiveScreen[];
 }
 
 export interface ClipboardState {
