@@ -70,7 +70,12 @@ jobs:
           cp app/build/outputs/apk/release/app-release.apk "AG_File_Manager_v${V_NAME}.apk"
           APKSIGNER_BIN=$(command -v apksigner || find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner | head -n 1 || true)
           if [ -n "$APKSIGNER_BIN" ]; then
-            "$APKSIGNER_BIN" verify --verbose --print-certs "AG_File_Manager_v${V_NAME}.apk"
+            CERT_OUTPUT=$("$APKSIGNER_BIN" verify --verbose --print-certs "AG_File_Manager_v${V_NAME}.apk")
+            echo "$CERT_OUTPUT"
+            if echo "$CERT_OUTPUT" | grep -q "CN=Android Debug"; then
+              echo "ERROR: APK signed with ephemeral Android Debug key!"
+              exit 1
+            fi
           fi
           cat <<EOF > version.json
           {

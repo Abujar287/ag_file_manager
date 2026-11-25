@@ -30,23 +30,26 @@ android {
 
     signingConfigs {
         create("release") {
-            val storePath = System.getenv("KEYSTORE_FILE")
-                ?: keystoreProperties.getProperty("storeFile")
+            val storePath = System.getenv("KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+                ?: keystoreProperties.getProperty("storeFile")?.takeIf { it.isNotBlank() }
                 ?: "release-keystore.jks"
+            val storePass = System.getenv("KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
+                ?: keystoreProperties.getProperty("storePassword")?.takeIf { it.isNotBlank() }
+            val alias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() }
+                ?: keystoreProperties.getProperty("keyAlias")?.takeIf { it.isNotBlank() }
+            val keyPass = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() }
+                ?: keystoreProperties.getProperty("keyPassword")?.takeIf { it.isNotBlank() }
             val storeFileObj = file(storePath)
-            if (storeFileObj.exists()) {
+            if (storeFileObj.exists() && storeFileObj.isFile && storePass != null && alias != null && keyPass != null) {
                 storeFile = storeFileObj
-                storePassword = System.getenv("KEYSTORE_PASSWORD")
-                    ?: keystoreProperties.getProperty("storePassword")
-                keyAlias = System.getenv("KEY_ALIAS")
-                    ?: keystoreProperties.getProperty("keyAlias")
-                keyPassword = System.getenv("KEY_PASSWORD")
-                    ?: keystoreProperties.getProperty("keyPassword")
+                storePassword = storePass
+                keyAlias = alias
+                keyPassword = keyPass
             }
         }
         create("ciSigning") {
             val ciStore = file("ci-signing.p12")
-            if (ciStore.exists()) {
+            if (ciStore.exists() && ciStore.isFile) {
                 storeFile = ciStore
                 storeType = "PKCS12"
                 storePassword = "agfilemanager"
@@ -68,8 +71,8 @@ android {
             val releaseSigning = signingConfigs.getByName("release")
             val ciSigning = signingConfigs.getByName("ciSigning")
             signingConfig = when {
-                releaseSigning.storeFile?.exists() == true -> releaseSigning
-                ciSigning.storeFile?.exists() == true -> ciSigning
+                releaseSigning.storeFile?.isFile == true -> releaseSigning
+                ciSigning.storeFile?.isFile == true -> ciSigning
                 else -> signingConfigs.getByName("debug")
             }
         }
@@ -77,8 +80,8 @@ android {
             val releaseSigning = signingConfigs.getByName("release")
             val ciSigning = signingConfigs.getByName("ciSigning")
             when {
-                releaseSigning.storeFile?.exists() == true -> signingConfig = releaseSigning
-                ciSigning.storeFile?.exists() == true -> signingConfig = ciSigning
+                releaseSigning.storeFile?.isFile == true -> signingConfig = releaseSigning
+                ciSigning.storeFile?.isFile == true -> signingConfig = ciSigning
             }
         }
     }

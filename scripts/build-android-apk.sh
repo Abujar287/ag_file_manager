@@ -111,7 +111,12 @@ fi
 echo "[4/4] Verifying APK signature and binary package integrity..."
 APKSIGNER_BIN=$(command -v apksigner || find "$ANDROID_HOME/build-tools" -name apksigner | head -n 1 || true)
 if [ -n "$APKSIGNER_BIN" ]; then
-  "$APKSIGNER_BIN" verify --verbose --print-certs "$BUILT_APK"
+  CERT_OUTPUT=$("$APKSIGNER_BIN" verify --verbose --print-certs "$BUILT_APK")
+  echo "$CERT_OUTPUT"
+  if echo "$CERT_OUTPUT" | grep -q "CN=Android Debug"; then
+    echo "ERROR: APK was signed with an ephemeral Android Debug keystore instead of a persistent release key!"
+    exit 1
+  fi
 fi
 
 AAPT_BIN=$(command -v aapt || find "$ANDROID_HOME/build-tools" -name aapt | head -n 1 || true)
