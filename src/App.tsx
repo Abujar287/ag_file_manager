@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X } from 'lucide-react';
+import { Home, Menu, X } from 'lucide-react';
 import {
   ActiveScreen,
   AnalyzerToolType,
@@ -8,6 +8,7 @@ import {
   ClipboardState,
   FileNode,
   SortBy,
+  SortOrder,
   TabWindow,
   ViewMode,
 } from './types/fileManager';
@@ -21,6 +22,7 @@ import { FileBrowser } from './components/FileBrowser';
 import { AnalyzerView } from './components/AnalyzerView';
 import { BatchRenameDialog } from './components/BatchRenameDialog';
 import { UpdateModal } from './components/UpdateModal';
+import { ViewSortModal } from './components/ViewSortModal';
 import { SettingsView } from './components/SettingsView';
 import { AboutView } from './components/AboutView';
 import { FileViewerDialog, NewItemDialog, PropertiesDialog } from './components/Dialogs';
@@ -192,10 +194,15 @@ export default function App() {
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
   const [newItemType, setNewItemType] = useState<'folder' | 'text' | 'file' | null>(null);
   const [renameTargetIds, setRenameTargetIds] = useState<string[] | null>(null);
-  const [propertiesNode, setPropertiesNode] = useState<FileNode | null>(null);
+  const [propertiesNodes, setPropertiesNodes] = useState<FileNode[] | null>(null);
   const [viewingFile, setViewingFile] = useState<FileNode | null>(null);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [viewSortModalOpen, setViewSortModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Left-edge swipe navigation state
+  const [edgeSwipeDx, setEdgeSwipeDx] = useState(0);
+  const edgeSwipeRef = useRef<{ active: boolean; startX: number; startY: number } | null>(null);
 
   // Exit dialog & storage permission states (Points 1, 2, 6)
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
@@ -284,9 +291,12 @@ export default function App() {
     });
   };
 
+  const pendingDirRequestsRef = useRef<Map<string, string>>(new Map());
+  const pendingCategoryReqRef = useRef<string | null>(null);
+
   const loadNativeFolder = (folderId: string, explicitPath?: string) => {
     const bridge = getNativeBridge();
-    if (!bridge || typeof bridge.listDirectory !== 'function') return;
+    if (!bridge) return;
 
     const targetNode = files.find((n) => n.id === folderId);
     const targetPath =
@@ -300,20 +310,63 @@ export default function App() {
 
     if (!targetPath) return;
 
-    try {
-      const jsonStr = bridge.listDirectory(targetPath);
-      if (jsonStr) {
-        const parsed = JSON.parse(jsonStr) as FileNode[];
-        if (Array.isArray(parsed)) {
-          const normalized = parsed.map((item) => ({
-            ...item,
-            parentId: folderId,
-          }));
-          mergeNativeNodes(folderId, normalized, true);
-        }
+    if (typeof bridge.listDirectoryAsync === 'function') {
+      const reqId = `dir_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      pendingDirRequestsRef.current.set(reqId, folderId);
+      try {
+        bridge.listDirectoryAsync(reqId, targetPath);
+        return;
+      } catch {
+        pendingDirRequestsRef.current.delete(reqId);
       }
-    } catch (e) {
-      console.warn('Native directory reading failed:', e);
+    }
+
+    if (typeof bridge.listDirectory === 'function') {
+      try {
+        const jsonStr = bridge.listDirectory(targetPath);
+        if (jsonStr) {
+          const parsed = JSON.parse(jsonStr) as FileNode[];
+          if (Array.isArray(parsed)) {
+            const normalized = parsed.map((item) => ({
+              ...item,
+              parentId: folderId,
+            }));
+            mergeNativeNodes(folderId, normalized, true);
+          }
+        }
+      } catch (e) {
+        console.warn('Native directory reading failed:', e);
+      }
+    }
+  };
+
+  const triggerAsyncCategoryScan = () => {
+    const bridge = getNativeBridge();
+    if (!bridge) return;
+    if (typeof bridge.scanAllCategoriesAsync === 'function') {
+      const reqId = `cat_${Date.now()}`;
+      pendingCategoryReqRef.current = reqId;
+      try {
+        bridge.scanAllCategoriesAsync(reqId);
+        return;
+      } catch {
+        // fall through
+      }
+    }
+    if (typeof bridge.scanAllCategories === 'function') {
+      window.setTimeout(() => {
+        try {
+          const raw = bridge.scanAllCategories!();
+          if (raw) {
+            const scanned = JSON.parse(raw) as FileNode[];
+            if (Array.isArray(scanned) && scanned.length > 0) {
+              mergeNativeNodes(null, scanned, false);
+            }
+          }
+        } catch (err) {
+          console.warn('Category scan skipped:', err);
+        }
+      }, 40);
     }
   };
 
@@ -343,40 +396,56 @@ export default function App() {
     const sdRootPath = stats.external?.isMounted ? stats.external.rootPath : undefined;
     mergeNativeNodes(null, createNativeRootNodes(internalRootPath, sdRootPath), false);
 
-    if (typeof bridge.listDirectory === 'function') {
-      loadNativeFolder('internal_root', internalRootPath);
-      if (sdRootPath) {
-        loadNativeFolder('sd_root', sdRootPath);
-      }
+    loadNativeFolder('internal_root', internalRootPath);
+    if (sdRootPath) {
+      loadNativeFolder('sd_root', sdRootPath);
     }
 
-    if (granted && typeof bridge.scanAllCategories === 'function') {
-      window.setTimeout(() => {
-        try {
-          const raw = bridge.scanAllCategories!();
-          if (raw) {
-            const scanned = JSON.parse(raw) as FileNode[];
-            if (Array.isArray(scanned) && scanned.length > 0) {
-              mergeNativeNodes(null, scanned, false);
-            }
-          }
-        } catch (err) {
-          console.warn('Category scan skipped:', err);
-        }
-      }, 60);
+    if (granted) {
+      triggerAsyncCategoryScan();
     }
   };
 
-  // Initialize live device storage stats & check permissions
+  // Initialize live device storage stats & async native event listeners
   useEffect(() => {
     refreshNativeDeviceState();
 
     const onPermissionEvent = () => {
       refreshNativeDeviceState();
     };
+    const onDirResult = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as {
+        requestId?: string;
+        items?: FileNode[];
+      };
+      if (!detail?.requestId || !Array.isArray(detail.items)) return;
+      const folderId = pendingDirRequestsRef.current.get(detail.requestId);
+      if (!folderId) return;
+      pendingDirRequestsRef.current.delete(detail.requestId);
+      const normalized = detail.items.map((item) => ({
+        ...item,
+        parentId: folderId,
+      }));
+      mergeNativeNodes(folderId, normalized, true);
+    };
+    const onCategoriesResult = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as {
+        requestId?: string;
+        items?: FileNode[];
+      };
+      if (!detail?.requestId || detail.requestId !== pendingCategoryReqRef.current) return;
+      if (Array.isArray(detail.items) && detail.items.length > 0) {
+        mergeNativeNodes(null, detail.items, false);
+      }
+    };
+
     window.addEventListener('android_permission_result', onPermissionEvent);
+    window.addEventListener('android_dir_result', onDirResult);
+    window.addEventListener('android_categories_result', onCategoriesResult);
     return () => {
       window.removeEventListener('android_permission_result', onPermissionEvent);
+      window.removeEventListener('android_dir_result', onDirResult);
+      window.removeEventListener('android_categories_result', onCategoriesResult);
     };
   }, []);
 
@@ -397,18 +466,7 @@ export default function App() {
         ].slice(0, 12));
       }
     } else if (screen.type === 'category' && isRunningInAndroidApp()) {
-      const bridge = getNativeBridge();
-      if (bridge && typeof bridge.scanAllCategories === 'function') {
-        try {
-          const raw = bridge.scanAllCategories();
-          if (raw) {
-            const scanned = JSON.parse(raw) as FileNode[];
-            if (Array.isArray(scanned)) mergeNativeNodes(null, scanned, false);
-          }
-        } catch {
-          // ignore
-        }
-      }
+      triggerAsyncCategoryScan();
     }
 
     const title = getScreenTitle(screen, files);
@@ -433,8 +491,12 @@ export default function App() {
       setViewingFile(null);
       return;
     }
-    if (propertiesNode) {
-      setPropertiesNode(null);
+    if (propertiesNodes) {
+      setPropertiesNodes(null);
+      return;
+    }
+    if (viewSortModalOpen) {
+      setViewSortModalOpen(false);
       return;
     }
     if (renameTargetIds) {
@@ -601,12 +663,23 @@ export default function App() {
     showToast('Closed other pages');
   };
 
-  const handleChangeSort = (sortBy: SortBy) => {
+  const handleChangeSort = (sortBy: SortBy, explicitOrder?: SortOrder) => {
     setSettings((prev) => ({
       ...prev,
       sortBy,
-      sortOrder: prev.sortBy === sortBy && prev.sortOrder === 'asc' ? 'desc' : 'asc',
+      sortOrder:
+        explicitOrder ||
+        (prev.sortBy === sortBy && prev.sortOrder === 'asc' ? 'desc' : 'asc'),
     }));
+  };
+
+  const handleOpenExternal = (file: FileNode) => {
+    const bridge = getNativeBridge();
+    if (bridge && file.realPath && typeof bridge.openFile === 'function') {
+      const ok = bridge.openFile(file.realPath, '');
+      if (ok) return;
+    }
+    handleDownloadFileCopy(file);
   };
 
   const handleOpenFile = (file: FileNode) => {
@@ -616,18 +689,50 @@ export default function App() {
         const ok = bridge.installApk(file.realPath);
         if (ok) return;
       }
-      if (file.kind === 'text' && file.size <= 512 * 1024 && typeof bridge.readTextFile === 'function') {
-        try {
-          const text = bridge.readTextFile(file.realPath);
-          setViewingFile({ ...file, content: text });
-          return;
-        } catch {
-          // fall through to viewer
-        }
+
+      const isPdf = file.name.toLowerCase().endsWith('.pdf');
+      if (
+        file.kind === 'image' ||
+        file.kind === 'video' ||
+        file.kind === 'audio' ||
+        isPdf
+      ) {
+        const fileUri =
+          file.mediaUrl ||
+          `file://${encodeURI(file.realPath).replace(/#/g, '%23')}`;
+        setViewingFile({ ...file, mediaUrl: fileUri });
+        return;
       }
-      if (typeof bridge.openFile === 'function') {
-        const ok = bridge.openFile(file.realPath, '');
-        if (ok) return;
+
+      if (file.kind === 'text') {
+        if (typeof bridge.readTextFileAsync === 'function') {
+          const reqId = `txt_${Date.now()}`;
+          const onTextResult = (ev: Event) => {
+            const detail = (ev as CustomEvent).detail as {
+              requestId?: string;
+              content?: string;
+            };
+            if (!detail || detail.requestId !== reqId) return;
+            window.removeEventListener('android_text_result', onTextResult);
+            setViewingFile({ ...file, content: detail.content ?? '' });
+          };
+          window.addEventListener('android_text_result', onTextResult);
+          try {
+            bridge.readTextFileAsync(reqId, file.realPath);
+            return;
+          } catch {
+            window.removeEventListener('android_text_result', onTextResult);
+          }
+        }
+        if (typeof bridge.readTextFile === 'function') {
+          try {
+            const text = bridge.readTextFile(file.realPath);
+            setViewingFile({ ...file, content: text });
+            return;
+          } catch {
+            // fall through to viewer
+          }
+        }
       }
     }
     setViewingFile(file);
@@ -1032,8 +1137,74 @@ export default function App() {
     ? files.filter((f) => renameTargetIds.includes(f.id))
     : [];
 
+  const handleRootTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    if (touch.clientX <= 42) {
+      edgeSwipeRef.current = {
+        active: true,
+        startX: touch.clientX,
+        startY: touch.clientY,
+      };
+    } else {
+      edgeSwipeRef.current = null;
+    }
+  };
+
+  const handleRootTouchMove = (e: React.TouchEvent) => {
+    const state = edgeSwipeRef.current;
+    if (!state || !state.active || e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - state.startX;
+    const dy = e.touches[0].clientY - state.startY;
+    if (Math.abs(dy) > 36 && Math.abs(dy) > Math.abs(dx)) {
+      edgeSwipeRef.current = null;
+      setEdgeSwipeDx(0);
+      return;
+    }
+    if (dx > 8) {
+      setEdgeSwipeDx(Math.min(110, dx));
+    }
+  };
+
+  const handleRootTouchEnd = () => {
+    const state = edgeSwipeRef.current;
+    if (state?.active && edgeSwipeDx >= 68) {
+      if (activeScreen.type !== 'home' || searchOpen) {
+        setSearchOpen(false);
+        setSearchQuery('');
+        navigateInActiveTab({ type: 'home' });
+      } else {
+        setDrawerOpen(true);
+      }
+    }
+    edgeSwipeRef.current = null;
+    setEdgeSwipeDx(0);
+  };
+
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
+    <div
+      className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100"
+      onTouchStart={handleRootTouchStart}
+      onTouchMove={handleRootTouchMove}
+      onTouchEnd={handleRootTouchEnd}
+      onTouchCancel={handleRootTouchEnd}
+    >
+      {/* Left-Edge Swipe Navigation Indicator */}
+      {edgeSwipeDx > 12 && (
+        <div
+          className="fixed left-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none flex items-center gap-1.5 pl-2 pr-3 py-2.5 rounded-r-2xl bg-blue-600 text-white shadow-xl transition-opacity"
+          style={{
+            transform: `translate3d(${Math.min(16, edgeSwipeDx - 36)}px, -50%, 0)`,
+            opacity: Math.min(1, edgeSwipeDx / 68),
+          }}
+        >
+          {activeScreen.type !== 'home' || searchOpen ? <Home size={18} /> : <Menu size={18} />}
+          <span className="text-xs font-semibold">
+            {activeScreen.type !== 'home' || searchOpen ? 'Home' : 'Menu'}
+          </span>
+        </div>
+      )}
+
       {/* Hidden file picker for importing individual real files from device */}
       <input
         ref={fileUploadInputRef}
@@ -1071,13 +1242,7 @@ export default function App() {
         onToggleSearch={setSearchOpen}
         onNewItem={(type) => setNewItemType(type)}
         onUploadFiles={() => fileUploadInputRef.current?.click()}
-        viewMode={settings.viewMode}
-        onChangeViewMode={(viewMode: ViewMode) =>
-          setSettings((prev) => ({ ...prev, viewMode }))
-        }
-        sortBy={settings.sortBy}
-        sortOrder={settings.sortOrder}
-        onChangeSort={handleChangeSort}
+        onOpenViewSort={() => setViewSortModalOpen(true)}
         historyPaths={historyPaths}
         onNavigateHistory={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
         tabs={tabs}
@@ -1177,7 +1342,7 @@ export default function App() {
               onShare={handleShare}
               onToggleFavourite={handleToggleFavourite}
               onCompressZip={handleCompressZip}
-              onShowProperties={setPropertiesNode}
+              onShowProperties={setPropertiesNodes}
             />
           ) : activeScreen.type === 'home' ? (
             <HomeDashboard
@@ -1227,7 +1392,7 @@ export default function App() {
               onShare={handleShare}
               onToggleFavourite={handleToggleFavourite}
               onCompressZip={handleCompressZip}
-              onShowProperties={setPropertiesNode}
+              onShowProperties={setPropertiesNodes}
             />
           ) : activeScreen.type === 'analyzer' ? (
             <AnalyzerView
@@ -1259,6 +1424,18 @@ export default function App() {
       </div>
 
       {/* Modals */}
+      <ViewSortModal
+        open={viewSortModalOpen}
+        viewMode={settings.viewMode}
+        sortBy={settings.sortBy}
+        sortOrder={settings.sortOrder}
+        onChangeViewMode={(viewMode: ViewMode) =>
+          setSettings((prev) => ({ ...prev, viewMode }))
+        }
+        onChangeSort={handleChangeSort}
+        onClose={() => setViewSortModalOpen(false)}
+      />
+
       <NewItemDialog
         type={newItemType}
         onCancel={() => setNewItemType(null)}
@@ -1274,9 +1451,9 @@ export default function App() {
       )}
 
       <PropertiesDialog
-        node={propertiesNode}
+        nodes={propertiesNodes}
         allNodes={files}
-        onClose={() => setPropertiesNode(null)}
+        onClose={() => setPropertiesNodes(null)}
       />
 
       <FileViewerDialog
@@ -1284,6 +1461,7 @@ export default function App() {
         onClose={() => setViewingFile(null)}
         onSaveText={handleSaveTextFile}
         onDownloadFile={handleDownloadFileCopy}
+        onOpenExternal={handleOpenExternal}
       />
 
       <UpdateModal

@@ -13,6 +13,18 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  input, textarea, .allow-text-select {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+
   code, pre, .font-mono {
     font-family: var(--font-mono);
   }

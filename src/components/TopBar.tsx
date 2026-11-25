@@ -1,23 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Check,
   ChevronRight,
   Clock,
   File,
   FilePlus2,
   FolderPlus,
-  Grid2X2,
   Home,
   Layers,
-  List,
   Menu,
   MoreVertical,
   Search,
+  SlidersHorizontal,
   Upload,
   X,
   XCircle,
 } from 'lucide-react';
-import { SortBy, SortOrder, TabWindow, ViewMode } from '../types/fileManager';
+import { TabWindow } from '../types/fileManager';
 import { AppLogo } from './AppLogo';
 
 interface TopBarProps {
@@ -29,11 +27,7 @@ interface TopBarProps {
   onToggleSearch: (open: boolean) => void;
   onNewItem: (type: 'folder' | 'text' | 'file') => void;
   onUploadFiles: () => void;
-  viewMode: ViewMode;
-  onChangeViewMode: (mode: ViewMode) => void;
-  sortBy: SortBy;
-  sortOrder: SortOrder;
-  onChangeSort: (sortBy: SortBy) => void;
+  onOpenViewSort: () => void;
   historyPaths: { id: string; label: string; path: string }[];
   onNavigateHistory: (folderId: string) => void;
   tabs: TabWindow[];
@@ -44,7 +38,7 @@ interface TopBarProps {
   onCloseOtherPages: () => void;
 }
 
-type OverflowSubmenu = 'root' | 'new' | 'view' | 'history' | 'windows';
+type OverflowSubmenu = 'root' | 'new' | 'history' | 'windows';
 
 export const TopBar: React.FC<TopBarProps> = ({
   onOpenDrawer,
@@ -55,11 +49,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleSearch,
   onNewItem,
   onUploadFiles,
-  viewMode,
-  onChangeViewMode,
-  sortBy,
-  sortOrder,
-  onChangeSort,
+  onOpenViewSort,
   historyPaths,
   onNavigateHistory,
   tabs,
@@ -168,6 +158,16 @@ export const TopBar: React.FC<TopBarProps> = ({
 
               <button
                 type="button"
+                onClick={onOpenViewSort}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                aria-label="View and Sort"
+                title="View & Sort"
+              >
+                <SlidersHorizontal size={19} />
+              </button>
+
+              <button
+                type="button"
                 onClick={() => onToggleSearch(true)}
                 className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 aria-label="Search files"
@@ -204,11 +204,14 @@ export const TopBar: React.FC<TopBarProps> = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => setSubmenu('view')}
+                          onClick={() => {
+                            closeMenu();
+                            onOpenViewSort();
+                          }}
                           className="w-full px-4 py-2.5 flex items-center justify-between text-left text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/80"
                         >
-                          <span>View</span>
-                          <ChevronRight size={16} className="text-slate-400" />
+                          <span>View &amp; Sort</span>
+                          <SlidersHorizontal size={15} className="text-slate-400" />
                         </button>
                         <button
                           type="button"
@@ -297,65 +300,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                       </div>
                     )}
 
-                    {submenu === 'view' && (
-                      <div>
-                        <button
-                          type="button"
-                          onClick={() => setSubmenu('root')}
-                          className="w-full px-4 py-2 text-xs font-semibold text-blue-600 dark:text-blue-400 text-left border-b border-slate-100 dark:border-slate-800"
-                        >
-                          ← Back · View & Sort
-                        </button>
-                        <div className="px-4 pt-2.5 pb-1 text-xs font-medium text-slate-500 dark:text-slate-400">
-                          View Mode
-                        </div>
-                        <div className="px-3 pb-2 grid grid-cols-2 gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => onChangeViewMode('list')}
-                            className={`px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium transition-colors ${
-                              viewMode === 'list'
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-                            }`}
-                          >
-                            <List size={14} />
-                            <span>List</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onChangeViewMode('grid')}
-                            className={`px-3 py-1.5 rounded-lg flex items-center justify-center gap-1.5 text-xs font-medium transition-colors ${
-                              viewMode === 'grid'
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-                            }`}
-                          >
-                            <Grid2X2 size={14} />
-                            <span>Grid</span>
-                          </button>
-                        </div>
-                        <div className="px-4 pt-2 pb-1 border-t border-slate-100 dark:border-slate-800 text-xs font-medium text-slate-500 dark:text-slate-400">
-                          Sort By
-                        </div>
-                        {(['name', 'size', 'date', 'type'] as SortBy[]).map((key) => (
-                          <button
-                            key={key}
-                            type="button"
-                            onClick={() => onChangeSort(key)}
-                            className="w-full px-4 py-2 flex items-center justify-between text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/80 capitalize"
-                          >
-                            <span>{key}</span>
-                            {sortBy === key && (
-                              <span className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 font-medium">
-                                {sortOrder === 'asc' ? 'Asc' : 'Desc'}
-                                <Check size={14} />
-                              </span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+
 
                     {submenu === 'history' && (
                       <div>

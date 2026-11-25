@@ -12,6 +12,7 @@ export interface FileNode {
   trashed?: boolean;
   originalParentId?: string | null;
   thumbnailUrl?: string;
+  mediaUrl?: string;
   content?: string;
   hash?: string; // used for duplicate file detection
   isAppCache?: boolean;
@@ -20,7 +21,7 @@ export interface FileNode {
 
 export type SortBy = 'name' | 'size' | 'date' | 'type';
 export type SortOrder = 'asc' | 'desc';
-export type ViewMode = 'list' | 'grid';
+export type ViewMode = 'list' | 'grid' | 'detail';
 export type ThemeMode = 'light' | 'dark' | 'system';
 
 export type CategoryType =

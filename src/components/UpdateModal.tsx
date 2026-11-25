@@ -343,6 +343,13 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
   const handleConfirmInstall = () => {
     const bridge = getNativeBridge();
     if (bridge && typeof bridge.installApk === 'function') {
+      if (
+        typeof bridge.canRequestPackageInstalls === 'function' &&
+        !bridge.canRequestPackageInstalls()
+      ) {
+        setPhase('permission_prompt');
+        return;
+      }
       const pathToInstall =
         downloadedApkPath || `/storage/emulated/0/Download/${targetFilename}`;
       const launched = bridge.installApk(pathToInstall);

@@ -36,10 +36,16 @@ export interface AndroidBridgeInterface {
   getAppVersionName?: () => string;
   getDeviceStorageStats?: () => string;
   listDirectory?: (path: string) => string;
+  listDirectoryAsync?: (requestId: string, path: string) => void;
   scanAllCategories?: () => string;
+  scanAllCategoriesAsync?: (requestId: string) => void;
+  calculatePropertiesAsync?: (requestId: string, pathsJson: string) => void;
+  getPdfPageCount?: (path: string) => number;
+  renderPdfPageAsync?: (requestId: string, path: string, pageIndex: number) => void;
   createFolder?: (parentPath: string, name: string) => boolean;
   createTextFile?: (parentPath: string, name: string, content: string) => boolean;
   readTextFile?: (path: string) => string;
+  readTextFileAsync?: (requestId: string, path: string) => void;
   writeTextFile?: (path: string, content: string) => boolean;
   renamePath?: (path: string, newName: string) => boolean;
   deletePaths?: (pathsJson: string, moveToTrash: boolean) => boolean;

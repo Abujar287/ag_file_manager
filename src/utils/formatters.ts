@@ -23,13 +23,22 @@ export function formatDateTime(epochMs: number): string {
 
 export function inferFileKind(filename: string): FileKind {
   const ext = filename.split('.').pop()?.toLowerCase() || '';
-  if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'svg'].includes(ext)) return 'image';
-  if (['mp4', 'mkv', 'mov', 'avi', 'webm'].includes(ext)) return 'video';
-  if (['mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg'].includes(ext)) return 'audio';
+  if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'heic', 'bmp', 'svg'].includes(ext)) return 'image';
+  if (['mp4', 'mkv', 'mov', 'avi', 'webm', '3gp', 'm4v'].includes(ext)) return 'video';
+  if (['mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'opus'].includes(ext)) return 'audio';
   if (ext === 'apk') return 'apk';
-  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz'].includes(ext)) return 'archive';
   if (['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) return 'document';
-  if (['txt', 'md', 'json', 'xml', 'csv', 'log', 'kt', 'kts', 'yml'].includes(ext)) return 'text';
+  if (
+    [
+      'txt', 'md', 'json', 'xml', 'csv', 'log', 'kt', 'kts', 'yml', 'yaml',
+      'js', 'jsx', 'ts', 'tsx', 'py', 'java', 'c', 'cpp', 'h', 'hpp',
+      'html', 'htm', 'css', 'scss', 'sql', 'sh', 'bash', 'gradle',
+      'properties', 'ini', 'conf', 'cfg', 'env', 'toml', 'rs', 'go', 'php', 'rb',
+    ].includes(ext)
+  ) {
+    return 'text';
+  }
   return 'other';
 }
 
@@ -45,30 +54,46 @@ export function getBaseName(filename: string): string {
   return filename.slice(0, idx);
 }
 
-export function computeFolderStats(
-  folderId: string,
-  allNodes: FileNode[],
-  showHidden: boolean
-): { itemCount: number; totalSize: number } {
-  const childrenMap = new Map<string | null, FileNode[]>();
+export type ChildrenMap = Map<string | null, FileNode[]>;
+
+export function buildChildrenMap(allNodes: FileNode[], showHidden: boolean): ChildrenMap {
+  const childrenMap: ChildrenMap = new Map();
   for (const node of allNodes) {
     if (node.trashed) continue;
     if (!showHidden && node.hidden) continue;
-    const list = childrenMap.get(node.parentId) || [];
+    let list = childrenMap.get(node.parentId);
+    if (!list) {
+      list = [];
+      childrenMap.set(node.parentId, list);
+    }
     list.push(node);
-    childrenMap.set(node.parentId, list);
   }
+  return childrenMap;
+}
 
+export function computeFolderStatsFromMap(
+  folderId: string,
+  childrenMap: ChildrenMap
+): { itemCount: number; totalSize: number; fileCount: number; folderCount: number } {
   const directChildren = childrenMap.get(folderId) || [];
   let totalSize = 0;
+  let fileCount = 0;
+  let folderCount = 0;
 
+  const visited = new Set<string>();
   const stack = [...directChildren];
   while (stack.length > 0) {
     const curr = stack.pop()!;
+    if (visited.has(curr.id)) continue;
+    visited.add(curr.id);
     if (curr.kind === 'folder') {
-      const sub = childrenMap.get(curr.id) || [];
-      for (const s of sub) stack.push(s);
+      folderCount++;
+      const sub = childrenMap.get(curr.id);
+      if (sub) {
+        for (let i = 0; i < sub.length; i++) stack.push(sub[i]);
+      }
     } else {
+      fileCount++;
       totalSize += curr.size;
     }
   }
@@ -76,7 +101,51 @@ export function computeFolderStats(
   return {
     itemCount: directChildren.length,
     totalSize,
+    fileCount,
+    folderCount,
   };
+}
+
+export function computeFolderStats(
+  folderId: string,
+  allNodes: FileNode[],
+  showHidden: boolean
+): { itemCount: number; totalSize: number } {
+  const childrenMap = buildChildrenMap(allNodes, showHidden);
+  const { itemCount, totalSize } = computeFolderStatsFromMap(folderId, childrenMap);
+  return { itemCount, totalSize };
+}
+
+export function computeMultiSelectionStats(
+  selectedNodes: FileNode[],
+  allNodes: FileNode[],
+  showHidden = true
+): { totalBytes: number; fileCount: number; folderCount: number } {
+  const childrenMap = buildChildrenMap(allNodes, showHidden);
+  const visitedIds = new Set<string>();
+  let totalBytes = 0;
+  let fileCount = 0;
+  let folderCount = 0;
+
+  const stack = [...selectedNodes];
+  while (stack.length > 0) {
+    const curr = stack.pop()!;
+    if (visitedIds.has(curr.id)) continue;
+    visitedIds.add(curr.id);
+
+    if (curr.kind === 'folder') {
+      folderCount++;
+      const sub = childrenMap.get(curr.id);
+      if (sub) {
+        for (let i = 0; i < sub.length; i++) stack.push(sub[i]);
+      }
+    } else {
+      fileCount++;
+      totalBytes += curr.size;
+    }
+  }
+
+  return { totalBytes, fileCount, folderCount };
 }
 
 export function getNodePath(nodeId: string, allNodes: FileNode[]): string {
@@ -105,9 +174,27 @@ export function sortFileNodes(
   sortBy: SortBy,
   sortOrder: SortOrder,
   allNodes: FileNode[],
-  showHidden: boolean
+  showHidden: boolean,
+  prebuiltChildrenMap?: ChildrenMap
 ): FileNode[] {
   const dir = sortOrder === 'asc' ? 1 : -1;
+  const childrenMap =
+    sortBy === 'size'
+      ? prebuiltChildrenMap || buildChildrenMap(allNodes, showHidden)
+      : undefined;
+
+  const sizeCache = new Map<string, number>();
+  const getSize = (node: FileNode): number => {
+    if (node.kind !== 'folder') return node.size;
+    const cached = sizeCache.get(node.id);
+    if (cached !== undefined) return cached;
+    const total = childrenMap
+      ? computeFolderStatsFromMap(node.id, childrenMap).totalSize
+      : 0;
+    sizeCache.set(node.id, total);
+    return total;
+  };
+
   return [...nodes].sort((a, b) => {
     // Folders always first
     if (a.kind === 'folder' && b.kind !== 'folder') return -1;
@@ -117,11 +204,7 @@ export function sortFileNodes(
     if (sortBy === 'name') {
       cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
     } else if (sortBy === 'size') {
-      const sa =
-        a.kind === 'folder' ? computeFolderStats(a.id, allNodes, showHidden).totalSize : a.size;
-      const sb =
-        b.kind === 'folder' ? computeFolderStats(b.id, allNodes, showHidden).totalSize : b.size;
-      cmp = sa - sb;
+      cmp = getSize(a) - getSize(b);
     } else if (sortBy === 'date') {
       cmp = a.modifiedAt - b.modifiedAt;
     } else if (sortBy === 'type') {
@@ -144,43 +227,43 @@ export type FolderBadgeKind =
   | 'document'
   | 'generic';
 
-export function getFolderVisualMeta(
+export function getFolderVisualMetaFromMap(
   folder: FileNode,
-  allNodes: FileNode[],
-  showHidden: boolean
+  childrenMap: ChildrenMap
 ): {
   isEmpty: boolean;
   badgeKind: FolderBadgeKind;
   previewThumbUrl?: string;
 } {
-  const childrenMap = new Map<string | null, FileNode[]>();
-  for (const node of allNodes) {
-    if (node.trashed) continue;
-    if (!showHidden && node.hidden) continue;
-    const list = childrenMap.get(node.parentId) || [];
-    list.push(node);
-    childrenMap.set(node.parentId, list);
-  }
-
   const direct = childrenMap.get(folder.id) || [];
   if (direct.length === 0) {
     return { isEmpty: true, badgeKind: 'none' };
   }
 
-  // Gather subtree files to find preview thumbnail & dominant content type
-  const subtreeFiles: FileNode[] = [];
+  let previewThumbUrl: string | undefined;
+  let firstKind: FileKind | undefined;
+
+  // Bounded BFS up to 120 nodes so large folders compute badges in <0.1ms
   const stack = [...direct];
-  while (stack.length > 0) {
+  let inspected = 0;
+  while (stack.length > 0 && inspected < 120) {
     const curr = stack.pop()!;
+    inspected++;
     if (curr.kind === 'folder') {
-      const sub = childrenMap.get(curr.id) || [];
-      for (const s of sub) stack.push(s);
+      const sub = childrenMap.get(curr.id);
+      if (sub) {
+        for (let i = 0; i < sub.length && inspected + stack.length < 150; i++) {
+          stack.push(sub[i]);
+        }
+      }
     } else {
-      subtreeFiles.push(curr);
+      if (!firstKind) firstKind = curr.kind;
+      if (!previewThumbUrl && curr.thumbnailUrl) {
+        previewThumbUrl = curr.thumbnailUrl;
+      }
+      if (firstKind && previewThumbUrl) break;
     }
   }
-
-  const previewThumbUrl = subtreeFiles.find((f) => Boolean(f.thumbnailUrl))?.thumbnailUrl;
 
   const lowerName = folder.name.toLowerCase();
   if (lowerName === 'download' || lowerName === 'downloads') {
@@ -205,7 +288,6 @@ export function getFolderVisualMeta(
     return { isEmpty: false, badgeKind: 'archive', previewThumbUrl };
   }
 
-  const firstKind = subtreeFiles[0]?.kind;
   const badgeKind: FolderBadgeKind =
     firstKind === 'image'
       ? 'image'
@@ -224,3 +306,14 @@ export function getFolderVisualMeta(
   return { isEmpty: false, badgeKind, previewThumbUrl };
 }
 
+export function getFolderVisualMeta(
+  folder: FileNode,
+  allNodes: FileNode[],
+  showHidden: boolean
+): {
+  isEmpty: boolean;
+  badgeKind: FolderBadgeKind;
+  previewThumbUrl?: string;
+} {
+  return getFolderVisualMetaFromMap(folder, buildChildrenMap(allNodes, showHidden));
+}

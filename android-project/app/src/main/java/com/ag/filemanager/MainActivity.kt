@@ -7,12 +7,23 @@ import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Matrix
+import android.graphics.pdf.PdfRenderer
+import android.media.ExifInterface
+import android.media.ThumbnailUtils
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Base64
+import android.util.Size
 import android.webkit.JavascriptInterface
 import android.webkit.MimeTypeMap
 import android.webkit.ValueCallback
@@ -27,9 +38,13 @@ import com.ag.filemanager.storage.StorageAnalyzer
 import com.ag.filemanager.update.UpdateManager
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
 
@@ -37,6 +52,7 @@ class MainActivity : Activity() {
     private var webView: WebView? = null
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var lastPermissionState: Boolean = false
+    private val ioExecutor = Executors.newFixedThreadPool(3)
 
     companion object {
         private const val REQ_INSTALL_PACKAGES = 1001
@@ -81,6 +97,11 @@ class MainActivity : Activity() {
         }
     }
 
+    override fun onDestroy() {
+        ioExecutor.shutdownNow()
+        super.onDestroy()
+    }
+
     private fun setupWebView() {
         val wv = WebView(this)
         webView = wv
@@ -95,7 +116,6 @@ class MainActivity : Activity() {
             allowFileAccessFromFileURLs = true
             @Suppress("DEPRECATION")
             allowUniversalAccessFromFileURLs = true
-            databaseEnabled = true
             useWideViewPort = true
             loadWithOverviewMode = true
             mediaPlaybackRequiresUserGesture = false
@@ -179,13 +199,20 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun notifyWebPermissionResult(granted: Boolean) {
+    private fun dispatchWebEvent(eventName: String, detailJson: JSONObject) {
+        val safePayload = detailJson.toString()
+            .replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029")
+        val js = "window.dispatchEvent(new CustomEvent('$eventName', { detail: $safePayload }));"
         webView?.post {
-            webView?.evaluateJavascript(
-                "window.dispatchEvent(new CustomEvent('android_permission_result', { detail: { granted: $granted } }));",
-                null
-            )
+            webView?.evaluateJavascript(js, null)
         }
+    }
+
+    private fun notifyWebPermissionResult(granted: Boolean) {
+        dispatchWebEvent("android_permission_result", JSONObject().apply {
+            put("granted", granted)
+        })
     }
 
     @Deprecated("Deprecated in Java")
@@ -193,7 +220,17 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
         when (requestCode) {
-            REQ_INSTALL_PACKAGES -> updateManager.resumePendingInstallIfGranted()
+            REQ_INSTALL_PACKAGES -> {
+                updateManager.resumePendingInstallIfGranted()
+                val canInstall = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    packageManager.canRequestPackageInstalls()
+                } else {
+                    true
+                }
+                dispatchWebEvent("android_install_permission_result", JSONObject().apply {
+                    put("granted", canInstall)
+                })
+            }
             REQ_MANAGE_STORAGE -> {
                 val granted = isStoragePermissionGranted()
                 lastPermissionState = granted
@@ -263,20 +300,151 @@ class MainActivity : Activity() {
             }
         }
 
-        private fun mapParentId(dir: File): String {
+        private fun mapParentId(
+            dir: File,
+            internalRoot: String = getInternalRootCanonical(),
+            sdRoot: String? = getSdRootCanonical()
+        ): String {
             val canonical = try {
                 dir.canonicalPath
             } catch (_: Exception) {
                 dir.absolutePath
             }
-            val internalRoot = getInternalRootCanonical()
             if (canonical == internalRoot) return "internal_root"
-            val sdRoot = getSdRootCanonical()
             if (sdRoot != null && canonical == sdRoot) return "sd_root"
             return "device_$canonical"
         }
 
-        private fun fileToJson(file: File, forcedParentId: String? = null): JSONObject {
+        private fun thumbCacheKey(file: File): String {
+            val raw = "${file.absolutePath}_${file.lastModified()}_${file.length()}"
+            return try {
+                val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
+                digest.take(12).joinToString("") { "%02x".format(it) }
+            } catch (_: Exception) {
+                raw.hashCode().toString()
+            }
+        }
+
+        private fun getOrGenerateThumbUri(
+            file: File,
+            isVideo: Boolean,
+            allowCreate: Boolean = true
+        ): String? {
+            return try {
+                val lower = file.name.lowercase()
+                if (!isVideo && (lower.endsWith(".gif") || lower.endsWith(".svg"))) {
+                    return Uri.fromFile(file).toString()
+                }
+                if (!isVideo && file.length() in 1L..24_576L) {
+                    return Uri.fromFile(file).toString()
+                }
+
+                val thumbDir = File(cacheDir, "thumbs")
+                if (!thumbDir.exists()) thumbDir.mkdirs()
+                val thumbFile = File(thumbDir, "${thumbCacheKey(file)}.jpg")
+                if (thumbFile.exists() && thumbFile.length() > 0L) {
+                    return Uri.fromFile(thumbFile).toString()
+                }
+                if (!allowCreate) {
+                    return if (isVideo) null else Uri.fromFile(file).toString()
+                }
+
+                val maxDim = 160
+                val rawBmp: Bitmap? = if (isVideo) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        ThumbnailUtils.createVideoThumbnail(file, Size(maxDim, maxDim), null)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        ThumbnailUtils.createVideoThumbnail(
+                            file.absolutePath,
+                            MediaStore.Video.Thumbnails.MINI_KIND
+                        )
+                    }
+                } else {
+                    val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(file.absolutePath, opts)
+                    val w = opts.outWidth
+                    val h = opts.outHeight
+                    if (w <= 0 || h <= 0) {
+                        null
+                    } else {
+                        var sample = 1
+                        while (w / (sample * 2) >= maxDim && h / (sample * 2) >= maxDim) {
+                            sample *= 2
+                        }
+                        val decOpts = BitmapFactory.Options().apply {
+                            inSampleSize = sample
+                            inPreferredConfig = Bitmap.Config.RGB_565
+                        }
+                        val decoded = BitmapFactory.decodeFile(file.absolutePath, decOpts)
+                        if (decoded != null) {
+                            val orientation = try {
+                                ExifInterface(file.absolutePath).getAttributeInt(
+                                    ExifInterface.TAG_ORIENTATION,
+                                    ExifInterface.ORIENTATION_NORMAL
+                                )
+                            } catch (_: Exception) {
+                                ExifInterface.ORIENTATION_NORMAL
+                            }
+                            val deg = when (orientation) {
+                                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                                else -> 0f
+                            }
+                            if (deg != 0f) {
+                                val m = Matrix().apply { postRotate(deg) }
+                                val rotated = Bitmap.createBitmap(
+                                    decoded, 0, 0, decoded.width, decoded.height, m, true
+                                )
+                                if (rotated !== decoded) decoded.recycle()
+                                rotated
+                            } else {
+                                decoded
+                            }
+                        } else {
+                            null
+                        }
+                    }
+                }
+
+                if (rawBmp == null) {
+                    return if (isVideo) null else Uri.fromFile(file).toString()
+                }
+
+                val scale = maxDim.toFloat() / maxOf(rawBmp.width, rawBmp.height).coerceAtLeast(1)
+                val finalBmp = if (scale < 1f) {
+                    val sw = (rawBmp.width * scale).toInt().coerceAtLeast(1)
+                    val sh = (rawBmp.height * scale).toInt().coerceAtLeast(1)
+                    val scaled = Bitmap.createScaledBitmap(rawBmp, sw, sh, true)
+                    if (scaled !== rawBmp) rawBmp.recycle()
+                    scaled
+                } else {
+                    rawBmp
+                }
+
+                FileOutputStream(thumbFile).use { fos ->
+                    finalBmp.compress(Bitmap.CompressFormat.JPEG, 78, fos)
+                }
+                finalBmp.recycle()
+
+                if (thumbFile.exists() && thumbFile.length() > 0L) {
+                    Uri.fromFile(thumbFile).toString()
+                } else {
+                    if (isVideo) null else Uri.fromFile(file).toString()
+                }
+            } catch (_: Exception) {
+                if (isVideo) null else Uri.fromFile(file).toString()
+            }
+        }
+
+        private fun fileToJson(
+            file: File,
+            forcedParentId: String? = null,
+            internalRoot: String = getInternalRootCanonical(),
+            sdRoot: String? = getSdRootCanonical(),
+            allowThumbCreate: Boolean = true
+        ): JSONObject {
             val canonical = try {
                 file.canonicalPath
             } catch (_: Exception) {
@@ -284,7 +452,9 @@ class MainActivity : Activity() {
             }
             val isDir = file.isDirectory
             val kind = if (isDir) "folder" else inferKind(file.name)
-            val parentId = forcedParentId ?: file.parentFile?.let { mapParentId(it) } ?: "internal_root"
+            val parentId = forcedParentId ?: file.parentFile?.let {
+                mapParentId(it, internalRoot, sdRoot)
+            } ?: "internal_root"
 
             return JSONObject().apply {
                 put("id", "device_$canonical")
@@ -295,8 +465,16 @@ class MainActivity : Activity() {
                 put("modifiedAt", file.lastModified())
                 put("hidden", file.name.startsWith("."))
                 put("realPath", canonical)
-                if (!isDir && kind == "image") {
-                    put("thumbnailUrl", Uri.fromFile(file).toString())
+                if (!isDir) {
+                    val lower = file.name.lowercase()
+                    if (kind == "image" || kind == "video" || kind == "audio" || lower.endsWith(".pdf")) {
+                        put("mediaUrl", Uri.fromFile(file).toString())
+                    }
+                    if (kind == "image" || kind == "video") {
+                        getOrGenerateThumbUri(file, kind == "video", allowThumbCreate)?.let {
+                            put("thumbnailUrl", it)
+                        }
+                    }
                 }
             }
         }
@@ -354,74 +532,249 @@ class MainActivity : Activity() {
             }
         }
 
+        private fun buildDirectoryJsonArray(path: String?): JSONArray {
+            val targetDir = when {
+                path.isNullOrEmpty() || path == "internal_root" -> Environment.getExternalStorageDirectory()
+                path == "sd_root" -> StorageAnalyzer.getExternalSdCard(this@MainActivity)?.rootPath
+                    ?: return JSONArray()
+                else -> File(path)
+            }
+
+            if (!targetDir.exists() || !targetDir.isDirectory || !targetDir.canRead()) {
+                return JSONArray()
+            }
+
+            val list = targetDir.listFiles() ?: return JSONArray()
+            val internalRoot = getInternalRootCanonical()
+            val sdRoot = getSdRootCanonical()
+            val resolvedParentId = mapParentId(targetDir, internalRoot, sdRoot)
+            val jsonArr = JSONArray()
+
+            for (file in list) {
+                jsonArr.put(
+                    fileToJson(
+                        file = file,
+                        forcedParentId = resolvedParentId,
+                        internalRoot = internalRoot,
+                        sdRoot = sdRoot,
+                        allowThumbCreate = true
+                    )
+                )
+            }
+            return jsonArr
+        }
+
         @JavascriptInterface
         fun listDirectory(path: String?): String {
             return try {
-                val targetDir = when {
-                    path.isNullOrEmpty() || path == "internal_root" -> Environment.getExternalStorageDirectory()
-                    path == "sd_root" -> StorageAnalyzer.getExternalSdCard(this@MainActivity)?.rootPath
-                        ?: return "[]"
-                    else -> File(path)
-                }
-
-                if (!targetDir.exists() || !targetDir.isDirectory || !targetDir.canRead()) {
-                    return "[]"
-                }
-
-                val list = targetDir.listFiles() ?: return "[]"
-                val resolvedParentId = mapParentId(targetDir)
-                val jsonArr = JSONArray()
-
-                for (file in list) {
-                    jsonArr.put(fileToJson(file, resolvedParentId))
-                }
-
-                jsonArr.toString()
+                buildDirectoryJsonArray(path).toString()
             } catch (_: Exception) {
                 "[]"
             }
         }
 
         @JavascriptInterface
+        fun listDirectoryAsync(requestId: String, path: String?) {
+            ioExecutor.execute {
+                val items = try {
+                    buildDirectoryJsonArray(path)
+                } catch (_: Exception) {
+                    JSONArray()
+                }
+                dispatchWebEvent("android_dir_result", JSONObject().apply {
+                    put("requestId", requestId)
+                    put("items", items)
+                })
+            }
+        }
+
+        private fun buildCategoriesJsonArray(): JSONArray {
+            val roots = mutableListOf(Environment.getExternalStorageDirectory())
+            StorageAnalyzer.getExternalSdCard(this@MainActivity)?.rootPath?.let { roots.add(it) }
+
+            val internalRoot = getInternalRootCanonical()
+            val sdRoot = getSdRootCanonical()
+            val jsonArr = JSONArray()
+            val queue = ArrayDeque<File>()
+            for (r in roots) {
+                if (r.exists() && r.canRead()) queue.add(r)
+            }
+
+            var scannedCount = 0
+            val maxEntries = 3500
+            var newThumbsBudget = 60
+
+            while (queue.isNotEmpty() && scannedCount < maxEntries) {
+                val dir = queue.removeFirst()
+                val children = dir.listFiles() ?: continue
+                val dirCanonical = try {
+                    dir.canonicalPath
+                } catch (_: Exception) {
+                    dir.absolutePath
+                }
+                val resolvedParentId = mapParentId(dir, internalRoot, sdRoot)
+                for (child in children) {
+                    val name = child.name
+                    if (child.isDirectory) {
+                        // Skip restricted Android/data & Android/obb subtree for speed and OS compliance
+                        if (name == "Android" && (dirCanonical == internalRoot || dirCanonical == sdRoot)) {
+                            continue
+                        }
+                        if (!name.startsWith(".")) {
+                            queue.addLast(child)
+                        }
+                        jsonArr.put(
+                            fileToJson(
+                                file = child,
+                                forcedParentId = resolvedParentId,
+                                internalRoot = internalRoot,
+                                sdRoot = sdRoot,
+                                allowThumbCreate = false
+                            )
+                        )
+                    } else {
+                        val kind = inferKind(name)
+                        val allowNewThumb = (kind == "image" || kind == "video") && newThumbsBudget > 0
+                        if (allowNewThumb) newThumbsBudget--
+                        jsonArr.put(
+                            fileToJson(
+                                file = child,
+                                forcedParentId = resolvedParentId,
+                                internalRoot = internalRoot,
+                                sdRoot = sdRoot,
+                                allowThumbCreate = allowNewThumb
+                            )
+                        )
+                    }
+                    scannedCount++
+                    if (scannedCount >= maxEntries) break
+                }
+            }
+            return jsonArr
+        }
+
+        @JavascriptInterface
         fun scanAllCategories(): String {
             return try {
-                val roots = mutableListOf(Environment.getExternalStorageDirectory())
-                StorageAnalyzer.getExternalSdCard(this@MainActivity)?.rootPath?.let { roots.add(it) }
-
-                val jsonArr = JSONArray()
-                val queue = ArrayDeque<File>()
-                for (r in roots) {
-                    if (r.exists() && r.canRead()) queue.add(r)
-                }
-
-                var scannedCount = 0
-                val maxEntries = 3500
-
-                while (queue.isNotEmpty() && scannedCount < maxEntries) {
-                    val dir = queue.removeFirst()
-                    val children = dir.listFiles() ?: continue
-                    val resolvedParentId = mapParentId(dir)
-                    for (child in children) {
-                        val name = child.name
-                        if (child.isDirectory) {
-                            // Skip restricted Android/data & Android/obb subtree for speed and OS compliance
-                            if (name == "Android" && (dir.canonicalPath == getInternalRootCanonical() || dir.canonicalPath == getSdRootCanonical())) {
-                                continue
-                            }
-                            if (!name.startsWith(".")) {
-                                queue.addLast(child)
-                            }
-                            jsonArr.put(fileToJson(child, resolvedParentId))
-                        } else {
-                            jsonArr.put(fileToJson(child, resolvedParentId))
-                        }
-                        scannedCount++
-                        if (scannedCount >= maxEntries) break
-                    }
-                }
-                jsonArr.toString()
+                buildCategoriesJsonArray().toString()
             } catch (_: Exception) {
                 "[]"
+            }
+        }
+
+        @JavascriptInterface
+        fun scanAllCategoriesAsync(requestId: String) {
+            ioExecutor.execute {
+                val items = try {
+                    buildCategoriesJsonArray()
+                } catch (_: Exception) {
+                    JSONArray()
+                }
+                dispatchWebEvent("android_categories_result", JSONObject().apply {
+                    put("requestId", requestId)
+                    put("items", items)
+                })
+            }
+        }
+
+        @JavascriptInterface
+        fun calculatePropertiesAsync(requestId: String, pathsJson: String) {
+            ioExecutor.execute {
+                var totalBytes = 0L
+                var fileCount = 0
+                var folderCount = 0
+                try {
+                    val arr = JSONArray(pathsJson)
+                    val visited = HashSet<String>()
+                    val stack = ArrayDeque<File>()
+                    for (i in 0 until arr.length()) {
+                        val f = File(arr.getString(i))
+                        if (f.exists()) stack.add(f)
+                    }
+                    while (stack.isNotEmpty()) {
+                        val curr = stack.removeLast()
+                        val canon = try {
+                            curr.canonicalPath
+                        } catch (_: Exception) {
+                            curr.absolutePath
+                        }
+                        if (!visited.add(canon)) continue
+                        if (curr.isDirectory) {
+                            folderCount++
+                            val children = curr.listFiles()
+                            if (children != null) {
+                                for (child in children) {
+                                    stack.addLast(child)
+                                }
+                            }
+                        } else if (curr.isFile) {
+                            fileCount++
+                            totalBytes += curr.length()
+                        }
+                    }
+                } catch (_: Exception) {
+                }
+
+                dispatchWebEvent("android_properties_result", JSONObject().apply {
+                    put("requestId", requestId)
+                    put("totalBytes", totalBytes)
+                    put("fileCount", fileCount)
+                    put("folderCount", folderCount)
+                })
+            }
+        }
+
+        @JavascriptInterface
+        fun getPdfPageCount(path: String): Int {
+            return try {
+                val file = File(path)
+                if (!file.exists() || !file.isFile) return 0
+                ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                    PdfRenderer(pfd).use { renderer ->
+                        renderer.pageCount
+                    }
+                }
+            } catch (_: Exception) {
+                0
+            }
+        }
+
+        @JavascriptInterface
+        fun renderPdfPageAsync(requestId: String, path: String, pageIndex: Int) {
+            ioExecutor.execute {
+                var dataUrl = ""
+                try {
+                    val file = File(path)
+                    if (file.exists() && file.isFile) {
+                        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                            PdfRenderer(pfd).use { renderer ->
+                                if (pageIndex in 0 until renderer.pageCount) {
+                                    renderer.openPage(pageIndex).use { page ->
+                                        val targetWidth = 1200
+                                        val scale = targetWidth.toFloat() / page.width.coerceAtLeast(1)
+                                        val bmpW = targetWidth
+                                        val bmpH = (page.height * scale).toInt().coerceAtLeast(1)
+                                        val bitmap = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                                        val canvas = Canvas(bitmap)
+                                        canvas.drawColor(Color.WHITE)
+                                        page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                        val baos = ByteArrayOutputStream()
+                                        bitmap.compress(Bitmap.CompressFormat.PNG, 90, baos)
+                                        bitmap.recycle()
+                                        val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                                        dataUrl = "data:image/png;base64,$b64"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    dataUrl = ""
+                }
+                dispatchWebEvent("android_pdf_page_result", JSONObject().apply {
+                    put("requestId", requestId)
+                    put("dataUrl", dataUrl)
+                })
             }
         }
 
@@ -454,13 +807,37 @@ class MainActivity : Activity() {
         fun readTextFile(path: String): String {
             return try {
                 val file = File(path)
-                if (file.exists() && file.isFile && file.length() <= 512 * 1024) {
+                if (file.exists() && file.isFile && file.length() <= 1024 * 1024) {
                     file.readText()
                 } else {
                     ""
                 }
             } catch (_: Exception) {
                 ""
+            }
+        }
+
+        @JavascriptInterface
+        fun readTextFileAsync(requestId: String, path: String) {
+            ioExecutor.execute {
+                val content = try {
+                    val file = File(path)
+                    if (!file.exists() || !file.isFile) {
+                        ""
+                    } else if (file.length() <= 1024 * 1024) {
+                        file.readText()
+                    } else {
+                        val buffer = ByteArray(1024 * 1024)
+                        file.inputStream().use { it.read(buffer) }
+                        String(buffer) + "\n\n... (truncated at 1 MB for preview)"
+                    }
+                } catch (_: Exception) {
+                    ""
+                }
+                dispatchWebEvent("android_text_result", JSONObject().apply {
+                    put("requestId", requestId)
+                    put("content", content)
+                })
             }
         }
 
@@ -665,8 +1042,26 @@ class MainActivity : Activity() {
 
         private fun resolveDownloadedApkFile(localUri: String?, expectedFileName: String?): File? {
             val candidates = mutableListOf<File>()
-            if (!localUri.isNullOrBlank() && localUri.startsWith("file://")) {
-                Uri.parse(localUri).path?.let { candidates.add(File(it)) }
+            if (!localUri.isNullOrBlank()) {
+                if (localUri.startsWith("file://")) {
+                    Uri.parse(localUri).path?.let { candidates.add(File(it)) }
+                } else if (localUri.startsWith("content://")) {
+                    try {
+                        contentResolver.query(
+                            Uri.parse(localUri),
+                            arrayOf("_data"),
+                            null,
+                            null,
+                            null
+                        )?.use { c ->
+                            if (c.moveToFirst()) {
+                                val dataPath = c.getString(0)
+                                if (!dataPath.isNullOrBlank()) candidates.add(File(dataPath))
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
             }
             val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             if (!expectedFileName.isNullOrBlank()) {
@@ -878,7 +1273,7 @@ class MainActivity : Activity() {
             return when {
                 lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ||
                 lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".heic") ||
-                lower.endsWith(".svg") -> "image"
+                lower.endsWith(".bmp") || lower.endsWith(".svg") -> "image"
                 lower.endsWith(".mp4") || lower.endsWith(".mkv") || lower.endsWith(".mov") ||
                 lower.endsWith(".avi") || lower.endsWith(".webm") || lower.endsWith(".3gp") -> "video"
                 lower.endsWith(".mp3") || lower.endsWith(".wav") || lower.endsWith(".flac") ||
@@ -887,7 +1282,16 @@ class MainActivity : Activity() {
                 lower.endsWith(".zip") || lower.endsWith(".rar") || lower.endsWith(".7z") ||
                 lower.endsWith(".tar") || lower.endsWith(".gz") -> "archive"
                 lower.endsWith(".txt") || lower.endsWith(".json") || lower.endsWith(".log") ||
-                lower.endsWith(".md") || lower.endsWith(".xml") || lower.endsWith(".csv") -> "text"
+                lower.endsWith(".md") || lower.endsWith(".xml") || lower.endsWith(".csv") ||
+                lower.endsWith(".kt") || lower.endsWith(".kts") || lower.endsWith(".js") ||
+                lower.endsWith(".jsx") || lower.endsWith(".ts") || lower.endsWith(".tsx") ||
+                lower.endsWith(".py") || lower.endsWith(".java") || lower.endsWith(".c") ||
+                lower.endsWith(".cpp") || lower.endsWith(".h") || lower.endsWith(".hpp") ||
+                lower.endsWith(".html") || lower.endsWith(".htm") || lower.endsWith(".css") ||
+                lower.endsWith(".scss") || lower.endsWith(".sql") || lower.endsWith(".sh") ||
+                lower.endsWith(".bash") || lower.endsWith(".gradle") || lower.endsWith(".properties") ||
+                lower.endsWith(".ini") || lower.endsWith(".conf") || lower.endsWith(".cfg") ||
+                lower.endsWith(".yml") || lower.endsWith(".yaml") -> "text"
                 lower.endsWith(".pdf") || lower.endsWith(".doc") || lower.endsWith(".docx") ||
                 lower.endsWith(".xls") || lower.endsWith(".xlsx") || lower.endsWith(".ppt") ||
                 lower.endsWith(".pptx") -> "document"

@@ -52,8 +52,8 @@ if [ -z "$GRADLE_BIN" ]; then
   exit 1
 fi
 
-# 1. Build web frontend if dist/ doesn't exist
-if [ ! -f "$ROOT_DIR/dist/index.html" ]; then
+# 1. Build fresh web frontend unless SKIP_WEB_BUILD=1
+if [ "${SKIP_WEB_BUILD:-0}" != "1" ] || [ ! -f "$ROOT_DIR/dist/index.html" ]; then
   echo "[1/4] Building web assets..."
   npm run build
 fi
