@@ -48,6 +48,7 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
   const [query, setQuery] = useState('');
   const [selectedApp, setSelectedApp] = useState<InstalledApp | null>(null);
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
+  const [visibleLimit, setVisibleLimit] = useState(40);
   const selectedPackagesRef = useRef<string[]>(selectedPackages);
   selectedPackagesRef.current = selectedPackages;
 
@@ -55,8 +56,13 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
   const longPressTriggeredRef = useRef(false);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const fallbackUninstallQueueRef = useRef<string[]>([]);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const inAndroid = isRunningInAndroidApp();
+
+  useEffect(() => {
+    setVisibleLimit(40);
+  }, [filterMode, query]);
 
   // JS-side sequential uninstall fallback when running on older native bridges without uninstallApps()
   useEffect(() => {
@@ -110,6 +116,26 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
 
   const userCount = useMemo(() => apps.filter((a) => !a.isSystemApp).length, [apps]);
   const systemCount = useMemo(() => apps.filter((a) => a.isSystemApp).length, [apps]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || visibleLimit >= filteredApps.length) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleLimit((prev) => Math.min(filteredApps.length, prev + 60));
+        }
+      },
+      { rootMargin: '400px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [visibleLimit, filteredApps.length]);
+
+  const renderedApps = useMemo(
+    () => filteredApps.slice(0, visibleLimit),
+    [filteredApps, visibleLimit]
+  );
 
   const isSelecting = selectedPackages.length > 0;
   const selectedSet = useMemo(() => new Set(selectedPackages), [selectedPackages]);
@@ -382,7 +408,7 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
         </div>
       ) : (
         <div className="divide-y divide-slate-200/70 dark:divide-slate-800/80 bg-white dark:bg-slate-900 sm:mx-6 sm:rounded-2xl sm:border sm:border-slate-200 sm:dark:border-slate-800 overflow-hidden">
-          {filteredApps.map((app) => {
+          {renderedApps.map((app) => {
             const isSelected = selectedSet.has(app.packageName);
             return (
               <div
@@ -393,7 +419,7 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
                 onPointerLeave={cancelLongPress}
                 onPointerCancel={cancelLongPress}
                 onClick={() => handleRowClick(app)}
-                className={`px-4 py-3 flex items-center gap-3 cursor-pointer select-none transition-colors ${
+                className={`cv-row px-4 py-3 flex items-center gap-3 cursor-pointer select-none ${
                   isSelected
                     ? 'bg-blue-50/90 dark:bg-blue-950/40'
                     : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
@@ -404,6 +430,7 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
                     src={app.iconUrl}
                     alt={app.name}
                     loading="lazy"
+                    decoding="async"
                     className="w-11 h-11 rounded-xl shrink-0 object-cover bg-slate-100 dark:bg-slate-800"
                   />
                 ) : (
@@ -467,6 +494,11 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
               </div>
             );
           })}
+          {visibleLimit < filteredApps.length && (
+            <div ref={sentinelRef} className="py-4 text-center text-xs text-slate-400">
+              Loading more apps...
+            </div>
+          )}
         </div>
       )}
 

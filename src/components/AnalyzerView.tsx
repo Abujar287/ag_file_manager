@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   BarChart3,
@@ -17,7 +17,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { AnalyzerToolType, FileNode } from '../types/fileManager';
-import { formatBytes, formatDateTime, getNodePath } from '../utils/formatters';
+import { formatBytes, formatDateTime } from '../utils/formatters';
 import { FileIcon } from './FileIcon';
 
 interface AnalyzerViewProps {
@@ -64,7 +64,7 @@ interface SelectableRowProps {
   onDeleteSingle: (id: string) => void;
 }
 
-const AnalyzerFileRow: React.FC<SelectableRowProps> = ({
+const AnalyzerFileRow: React.FC<SelectableRowProps> = memo(({
   node,
   selected,
   isSelecting,
@@ -79,7 +79,7 @@ const AnalyzerFileRow: React.FC<SelectableRowProps> = ({
   return (
     <div
       onClick={() => (isSelecting ? onToggleSelect(node.id) : onPrimaryClick(node))}
-      className={`px-3.5 sm:px-4 py-3 flex items-center gap-3 cursor-pointer select-none transition-colors ${
+      className={`cv-row px-3.5 sm:px-4 py-3 flex items-center gap-3 cursor-pointer select-none ${
         selected
           ? 'bg-blue-50/90 dark:bg-blue-950/40'
           : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
@@ -152,9 +152,11 @@ const AnalyzerFileRow: React.FC<SelectableRowProps> = ({
       </button>
     </div>
   );
-};
+});
 
-export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
+AnalyzerFileRow.displayName = 'AnalyzerFileRow';
+
+export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
   tool,
   files,
   nativeEmptyFolders,
@@ -177,12 +179,48 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+  const [visibleLimit, setVisibleLimit] = useState(40);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setSelectedIds([]);
     setMoreMenuOpen(false);
     setExpandedGroup(null);
+    setVisibleLimit(40);
   }, [tool]);
+
+  const getCachedPath = useMemo(() => {
+    const byId = new Map(files.map((n) => [n.id, n]));
+    const pathCache = new Map<string, string>();
+    return (nodeId: string): string => {
+      const hit = pathCache.get(nodeId);
+      if (hit !== undefined) return hit;
+      const direct = byId.get(nodeId);
+      if (direct?.realPath) {
+        pathCache.set(nodeId, direct.realPath);
+        return direct.realPath;
+      }
+      const parts: string[] = [];
+      let curr = direct;
+      let guard = 0;
+      while (curr && guard < 40) {
+        guard++;
+        if (curr.id === 'internal_root') {
+          parts.unshift('/storage/emulated/0');
+          break;
+        }
+        if (curr.id === 'sd_root') {
+          parts.unshift('/storage/sdcard1');
+          break;
+        }
+        parts.unshift(curr.name);
+        curr = curr.parentId ? byId.get(curr.parentId) : undefined;
+      }
+      const resolved = parts.join('/') || '/storage/emulated/0';
+      pathCache.set(nodeId, resolved);
+      return resolved;
+    };
+  }, [files]);
 
   // Prune any IDs that were deleted/moved out of active set
   useEffect(() => {
@@ -333,11 +371,33 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
     };
   }, [files, nativeEmptyFolders]);
 
-  const toggleSelect = (id: string) => {
+  useEffect(() => {
+    const targetCount =
+      tool === 'large_files'
+        ? largeFiles.length
+        : tool === 'recent_files'
+          ? recentFiles.length
+          : 0;
+    if (visibleLimit >= targetCount) return;
+    const el = sentinelRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisibleLimit((prev) => Math.min(prev + 60, targetCount));
+        }
+      },
+      { rootMargin: '400px' }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [tool, visibleLimit, largeFiles.length, recentFiles.length]);
+
+  const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
-  };
+  }, []);
 
   const visibleSelectableIds = useMemo(() => {
     if (tool === 'large_files') return largeFiles.map((f) => f.id);
@@ -490,7 +550,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                           No files in {g.label}.
                         </div>
                       ) : (
-                        g.items.slice(0, 120).map((file) => (
+                        g.items.slice(0, 80).map((file) => (
                           <AnalyzerFileRow
                             key={file.id}
                             node={file}
@@ -498,7 +558,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                             selected={selectedIds.includes(file.id)}
                             isSelecting={isSelecting}
                             showThumbnails={showThumbnails}
-                            subtitle={getNodePath(file.parentId || 'internal_root', files)}
+                            subtitle={getCachedPath(file.parentId || 'internal_root')}
                             rightText={formatBytes(file.size)}
                             onPrimaryClick={(item) => onOpenFile(item, g.items)}
                             onToggleSelect={toggleSelect}
@@ -524,22 +584,29 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
               No files larger than 50 MB found.
             </div>
           ) : (
-            largeFiles.map((file) => (
-              <AnalyzerFileRow
-                key={file.id}
-                node={file}
-                files={files}
-                selected={selectedIds.includes(file.id)}
-                isSelecting={isSelecting}
-                showThumbnails={showThumbnails}
-                subtitle={getNodePath(file.parentId || 'internal_root', files)}
-                rightText={formatBytes(file.size)}
-                onPrimaryClick={(item) => onOpenFile(item, largeFiles)}
-                onToggleSelect={toggleSelect}
-                onMoveSingle={(id) => onMoveFiles([id])}
-                onDeleteSingle={(id) => onDeleteFiles([id])}
-              />
-            ))
+            <>
+              {largeFiles.slice(0, visibleLimit).map((file) => (
+                <AnalyzerFileRow
+                  key={file.id}
+                  node={file}
+                  files={files}
+                  selected={selectedIds.includes(file.id)}
+                  isSelecting={isSelecting}
+                  showThumbnails={showThumbnails}
+                  subtitle={getCachedPath(file.parentId || 'internal_root')}
+                  rightText={formatBytes(file.size)}
+                  onPrimaryClick={(item) => onOpenFile(item, largeFiles)}
+                  onToggleSelect={toggleSelect}
+                  onMoveSingle={(id) => onMoveFiles([id])}
+                  onDeleteSingle={(id) => onDeleteFiles([id])}
+                />
+              ))}
+              {visibleLimit < largeFiles.length && (
+                <div ref={sentinelRef} className="py-4 text-center text-xs text-slate-400">
+                  Loading more...
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -552,21 +619,28 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
               No recent files indexed yet.
             </div>
           ) : (
-            recentFiles.map((file) => (
-              <AnalyzerFileRow
-                key={file.id}
-                node={file}
-                files={files}
-                selected={selectedIds.includes(file.id)}
-                isSelecting={isSelecting}
-                showThumbnails={showThumbnails}
-                subtitle={`${formatBytes(file.size)} · ${formatDateTime(file.modifiedAt)}`}
-                onPrimaryClick={(item) => onOpenFile(item, recentFiles)}
-                onToggleSelect={toggleSelect}
-                onMoveSingle={(id) => onMoveFiles([id])}
-                onDeleteSingle={(id) => onDeleteFiles([id])}
-              />
-            ))
+            <>
+              {recentFiles.slice(0, visibleLimit).map((file) => (
+                <AnalyzerFileRow
+                  key={file.id}
+                  node={file}
+                  files={files}
+                  selected={selectedIds.includes(file.id)}
+                  isSelecting={isSelecting}
+                  showThumbnails={showThumbnails}
+                  subtitle={`${formatBytes(file.size)} · ${formatDateTime(file.modifiedAt)}`}
+                  onPrimaryClick={(item) => onOpenFile(item, recentFiles)}
+                  onToggleSelect={toggleSelect}
+                  onMoveSingle={(id) => onMoveFiles([id])}
+                  onDeleteSingle={(id) => onDeleteFiles([id])}
+                />
+              ))}
+              {visibleLimit < recentFiles.length && (
+                <div ref={sentinelRef} className="py-4 text-center text-xs text-slate-400">
+                  Loading more...
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -615,7 +689,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                   selected={selectedIds.includes(folder.id)}
                   isSelecting={isSelecting}
                   showThumbnails={false}
-                  subtitle={folder.realPath || getNodePath(folder.id, files)}
+                  subtitle={folder.realPath || getCachedPath(folder.id)}
                   onPrimaryClick={(node) => onOpenFolder(node.id)}
                   onToggleSelect={toggleSelect}
                   onMoveSingle={(id) => onMoveFiles([id])}
@@ -670,7 +744,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                   selected={selectedIds.includes(c.id)}
                   isSelecting={isSelecting}
                   showThumbnails={showThumbnails}
-                  subtitle={getNodePath(c.parentId || 'internal_root', files)}
+                  subtitle={getCachedPath(c.parentId || 'internal_root')}
                   rightText={formatBytes(c.size)}
                   onPrimaryClick={(item) => onOpenFile(item, cacheFiles)}
                   onToggleSelect={toggleSelect}
@@ -718,7 +792,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                       selected={selectedIds.includes(item.id)}
                       isSelecting={isSelecting}
                       showThumbnails={showThumbnails}
-                      subtitle={getNodePath(item.parentId || 'internal_root', files)}
+                      subtitle={getCachedPath(item.parentId || 'internal_root')}
                       onPrimaryClick={(item) => onOpenFile(item, duplicateGroups.flat())}
                       onToggleSelect={toggleSelect}
                       onMoveSingle={(id) => onMoveFiles([id])}
@@ -850,4 +924,6 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
       )}
     </div>
   );
-};
+});
+
+AnalyzerView.displayName = 'AnalyzerView';

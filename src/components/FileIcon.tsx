@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import {
   Archive,
   Camera,
@@ -24,6 +24,41 @@ import {
   isRunningInAndroidApp,
   requestNativeMediaThumbnail,
 } from '../services/deviceStorageService';
+
+// Single shared IntersectionObserver for all FileIcon thumbnails (zero per-row observer overhead)
+const thumbVisibilityCallbacks = new WeakMap<Element, () => void>();
+let sharedThumbObserver: IntersectionObserver | null = null;
+
+function observeThumbElement(el: Element, onVisible: () => void): () => void {
+  if (typeof IntersectionObserver === 'undefined') {
+    onVisible();
+    return () => {};
+  }
+  if (!sharedThumbObserver) {
+    sharedThumbObserver = new IntersectionObserver(
+      (entries) => {
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          if (entry.isIntersecting) {
+            const cb = thumbVisibilityCallbacks.get(entry.target);
+            if (cb) {
+              thumbVisibilityCallbacks.delete(entry.target);
+              sharedThumbObserver?.unobserve(entry.target);
+              cb();
+            }
+          }
+        }
+      },
+      { rootMargin: '220px' }
+    );
+  }
+  thumbVisibilityCallbacks.set(el, onVisible);
+  sharedThumbObserver.observe(el);
+  return () => {
+    thumbVisibilityCallbacks.delete(el);
+    sharedThumbObserver?.unobserve(el);
+  };
+}
 
 interface FileIconProps {
   node: FileNode;
@@ -60,7 +95,7 @@ const FolderBadgeIcon: React.FC<{ kind: FolderBadgeKind }> = ({ kind }) => {
   }
 };
 
-export const FileIcon: React.FC<FileIconProps> = ({
+export const FileIcon: React.FC<FileIconProps> = memo(({
   node,
   showThumbnails,
   size = 'md',
@@ -107,27 +142,17 @@ export const FileIcon: React.FC<FileIconProps> = ({
       });
     };
 
-    if (!el || typeof IntersectionObserver === 'undefined') {
+    if (!el) {
       triggerLoad();
       return () => {
         cancelled = true;
       };
     }
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          observer.disconnect();
-          triggerLoad();
-        }
-      },
-      { rootMargin: '180px' }
-    );
-    observer.observe(el);
-
+    const unobserve = observeThumbElement(el, triggerLoad);
     return () => {
       cancelled = true;
-      observer.disconnect();
+      unobserve();
     };
   }, [needsNativeLazyThumb, node.realPath]);
 
@@ -163,12 +188,6 @@ export const FileIcon: React.FC<FileIconProps> = ({
           xmlns="http://www.w3.org/2000/svg"
           aria-hidden="true"
         >
-          <defs>
-            <linearGradient id="agFolderFront" x1="24" y1="8" x2="24" y2="39" gradientUnits="userSpaceOnUse">
-              <stop stopColor="#3B93FF" />
-              <stop offset="1" stopColor="#166AE5" />
-            </linearGradient>
-          </defs>
           {/* Back tab */}
           <path
             d="M2 7C2 4.79086 3.79086 3 6 3H16.8C17.95 3 19.04 3.49 19.8 4.35L22.5 7.4H42C44.2091 7.4 46 9.19086 46 11.4V34C46 36.2091 44.2091 38 42 38H6C3.79086 38 2 36.2091 2 34V7Z"
@@ -193,7 +212,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
                 ? 'M2 10.5C2 8.84315 3.34315 7.5 5 7.5H43C44.6569 7.5 46 8.84315 46 10.5V34C46 36.2091 44.2091 38 42 38H6C3.79086 38 2 36.2091 2 34V10.5Z'
                 : 'M2 13C2 11.3431 3.34315 10 5 10H43C44.6569 10 46 11.3431 46 13V34C46 36.2091 44.2091 38 42 38H6C3.79086 38 2 36.2091 2 34V13Z'
             }
-            fill="url(#agFolderFront)"
+            fill="#247DF2"
           />
         </svg>
 
@@ -204,6 +223,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
               src={folderMeta.previewThumbUrl}
               alt=""
               loading="lazy"
+              decoding="async"
               referrerPolicy="no-referrer"
               onError={() => setImgError(true)}
               className="w-full h-full object-cover"
@@ -224,7 +244,9 @@ export const FileIcon: React.FC<FileIconProps> = ({
   const effectiveThumbUrl =
     node.thumbnailUrl ||
     lazyThumbUrl ||
-    (node.kind === 'image' ? node.mediaUrl : undefined);
+    (node.kind === 'image' && (!isRunningInAndroidApp() || node.size <= 32_768)
+      ? node.mediaUrl
+      : undefined);
 
   // Normal File Thumbnail when Show Thumbnails is enabled
   if (showThumbnails && effectiveThumbUrl && !imgError) {
@@ -241,6 +263,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
           src={effectiveThumbUrl}
           alt={node.name}
           loading="lazy"
+          decoding="async"
           referrerPolicy="no-referrer"
           onError={() => setImgError(true)}
           className="w-full h-full object-cover"
@@ -248,7 +271,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
         {node.kind === 'video' && (
           <span
             style={{ width: playBadgeSize, height: playBadgeSize }}
-            className="absolute inset-0 m-auto rounded-full bg-black/55 backdrop-blur-[1px] text-white flex items-center justify-center shadow-xs pointer-events-none"
+            className="absolute inset-0 m-auto rounded-full bg-black/60 text-white flex items-center justify-center shadow-xs pointer-events-none"
           >
             <Play size={playIconSize} fill="currentColor" className="ml-0.5" />
           </span>
@@ -258,7 +281,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
   }
 
   // Browser fallback preview frame for local/uploaded videos when no pre-rendered thumbnail exists
-  if (showThumbnails && node.kind === 'video' && node.mediaUrl && !videoError) {
+  if (showThumbnails && node.kind === 'video' && node.mediaUrl && !isRunningInAndroidApp() && !videoError) {
     const playBadgeSize = size === 'fill' ? 28 : size === 'lg' ? 20 : size === 'sm' ? 14 : 16;
     const playIconSize = size === 'fill' ? 14 : size === 'lg' ? 10 : size === 'sm' ? 8 : 9;
     return (
@@ -365,4 +388,6 @@ export const FileIcon: React.FC<FileIconProps> = ({
         </div>
       );
   }
-};
+});
+
+FileIcon.displayName = 'FileIcon';

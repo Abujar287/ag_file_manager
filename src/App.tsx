@@ -1921,6 +1921,30 @@ export default function App() {
   const handleCancelClipboardMemo = useCallback(() => setClipboard(null), []);
   const handleRenameRequestMemo = useCallback((ids: string[]) => setRenameTargetIds(ids), []);
   const handleMoveRequestMemo = useCallback((ids: string[]) => setMoveTargetIds(ids), []);
+  const handleDeleteNonPermanentMemo = useCallback(
+    (ids: string[]) => requestDeleteConfirm(ids, false),
+    [requestDeleteConfirm]
+  );
+  const handleCloseViewerMemo = useCallback(() => {
+    setViewingFile(null);
+    setViewingContextFiles([]);
+  }, []);
+  const handleSelectViewerFileMemo = useCallback(
+    (nextFile: FileNode) => handleOpenFile(nextFile, viewingContextFiles),
+    [handleOpenFile, viewingContextFiles]
+  );
+  const handleShareViewerFileMemo = useCallback(
+    (target: FileNode) => handleShare([target.id]),
+    [handleShare]
+  );
+  const handleDeleteViewerFileMemo = useCallback(
+    (target: FileNode) => {
+      setViewingFile(null);
+      setViewingContextFiles([]);
+      requestDeleteConfirm([target.id], false);
+    },
+    [requestDeleteConfirm]
+  );
 
   return (
     <div
@@ -2147,7 +2171,7 @@ export default function App() {
               onRefreshEmptyFolders={isRunningInAndroidApp() ? loadNativeEmptyFolders : undefined}
               onOpenFolder={handleOpenFolderMemo}
               onOpenFile={handleOpenFile}
-              onDeleteFiles={(ids) => requestDeleteConfirm(ids, false)}
+              onDeleteFiles={handleDeleteNonPermanentMemo}
               onCopyFiles={handleCopyMemo}
               onCutFiles={handleCutMemo}
               onMoveFiles={handleMoveRequestMemo}
@@ -2254,20 +2278,13 @@ export default function App() {
       <FileViewerDialog
         file={viewingFile}
         galleryFiles={viewingContextFiles}
-        onSelectFile={(nextFile) => handleOpenFile(nextFile, viewingContextFiles)}
-        onClose={() => {
-          setViewingFile(null);
-          setViewingContextFiles([]);
-        }}
+        onSelectFile={handleSelectViewerFileMemo}
+        onClose={handleCloseViewerMemo}
         onSaveText={handleSaveTextFile}
         onDownloadFile={handleDownloadFileCopy}
         onOpenExternal={handleOpenExternal}
-        onShareFile={(target) => handleShare([target.id])}
-        onDeleteFile={(target) => {
-          setViewingFile(null);
-          setViewingContextFiles([]);
-          requestDeleteConfirm([target.id], false);
-        }}
+        onShareFile={handleShareViewerFileMemo}
+        onDeleteFile={handleDeleteViewerFileMemo}
       />
 
       <UpdateModal
@@ -2282,7 +2299,7 @@ export default function App() {
       />
 
       {apkConflictPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55">
           <div
             className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 space-y-4"
             role="dialog"

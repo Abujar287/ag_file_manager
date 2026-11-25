@@ -71,10 +71,23 @@ export function buildChildrenMap(allNodes: FileNode[], showHidden: boolean): Chi
   return childrenMap;
 }
 
+const folderStatsWeakCache = new WeakMap<
+  ChildrenMap,
+  Map<string, { itemCount: number; totalSize: number; fileCount: number; folderCount: number }>
+>();
+
 export function computeFolderStatsFromMap(
   folderId: string,
   childrenMap: ChildrenMap
 ): { itemCount: number; totalSize: number; fileCount: number; folderCount: number } {
+  let cache = folderStatsWeakCache.get(childrenMap);
+  if (!cache) {
+    cache = new Map();
+    folderStatsWeakCache.set(childrenMap, cache);
+  }
+  const hit = cache.get(folderId);
+  if (hit) return hit;
+
   const directChildren = childrenMap.get(folderId) || [];
   let totalSize = 0;
   let fileCount = 0;
@@ -98,12 +111,14 @@ export function computeFolderStatsFromMap(
     }
   }
 
-  return {
+  const res = {
     itemCount: directChildren.length,
     totalSize,
     fileCount,
     folderCount,
   };
+  cache.set(folderId, res);
+  return res;
 }
 
 export function computeFolderStats(
@@ -227,6 +242,11 @@ export type FolderBadgeKind =
   | 'document'
   | 'generic';
 
+const folderVisualWeakCache = new WeakMap<
+  ChildrenMap,
+  Map<string, { isEmpty: boolean; badgeKind: FolderBadgeKind; previewThumbUrl?: string }>
+>();
+
 export function getFolderVisualMetaFromMap(
   folder: FileNode,
   childrenMap: ChildrenMap
@@ -235,9 +255,19 @@ export function getFolderVisualMetaFromMap(
   badgeKind: FolderBadgeKind;
   previewThumbUrl?: string;
 } {
+  let cache = folderVisualWeakCache.get(childrenMap);
+  if (!cache) {
+    cache = new Map();
+    folderVisualWeakCache.set(childrenMap, cache);
+  }
+  const hit = cache.get(folder.id);
+  if (hit) return hit;
+
   const direct = childrenMap.get(folder.id) || [];
   if (direct.length === 0) {
-    return { isEmpty: true, badgeKind: 'none' };
+    const emptyRes = { isEmpty: true, badgeKind: 'none' as FolderBadgeKind };
+    cache.set(folder.id, emptyRes);
+    return emptyRes;
   }
 
   let previewThumbUrl: string | undefined;
@@ -266,44 +296,41 @@ export function getFolderVisualMetaFromMap(
   }
 
   const lowerName = folder.name.toLowerCase();
+  let res: { isEmpty: boolean; badgeKind: FolderBadgeKind; previewThumbUrl?: string };
   if (lowerName === 'download' || lowerName === 'downloads') {
-    return { isEmpty: false, badgeKind: 'download', previewThumbUrl };
-  }
-  if (lowerName === 'dcim' || lowerName === 'camera') {
-    return { isEmpty: false, badgeKind: 'camera', previewThumbUrl };
-  }
-  if (lowerName === 'pictures' || lowerName === 'screenshots') {
-    return { isEmpty: false, badgeKind: 'image', previewThumbUrl };
-  }
-  if (lowerName === 'music' || lowerName === 'ringtones' || lowerName === 'audio') {
-    return { isEmpty: false, badgeKind: 'music', previewThumbUrl };
-  }
-  if (lowerName === 'movies' || lowerName === 'videos') {
-    return { isEmpty: false, badgeKind: 'video', previewThumbUrl };
-  }
-  if (lowerName === 'documents') {
-    return { isEmpty: false, badgeKind: 'document', previewThumbUrl };
-  }
-  if (lowerName === 'backups' || lowerName === 'backups_sd') {
-    return { isEmpty: false, badgeKind: 'archive', previewThumbUrl };
+    res = { isEmpty: false, badgeKind: 'download', previewThumbUrl };
+  } else if (lowerName === 'dcim' || lowerName === 'camera') {
+    res = { isEmpty: false, badgeKind: 'camera', previewThumbUrl };
+  } else if (lowerName === 'pictures' || lowerName === 'screenshots') {
+    res = { isEmpty: false, badgeKind: 'image', previewThumbUrl };
+  } else if (lowerName === 'music' || lowerName === 'ringtones' || lowerName === 'audio') {
+    res = { isEmpty: false, badgeKind: 'music', previewThumbUrl };
+  } else if (lowerName === 'movies' || lowerName === 'videos') {
+    res = { isEmpty: false, badgeKind: 'video', previewThumbUrl };
+  } else if (lowerName === 'documents') {
+    res = { isEmpty: false, badgeKind: 'document', previewThumbUrl };
+  } else if (lowerName === 'backups' || lowerName === 'backups_sd') {
+    res = { isEmpty: false, badgeKind: 'archive', previewThumbUrl };
+  } else {
+    const badgeKind: FolderBadgeKind =
+      firstKind === 'image'
+        ? 'image'
+        : firstKind === 'video'
+          ? 'video'
+          : firstKind === 'audio'
+            ? 'music'
+            : firstKind === 'apk'
+              ? 'apk'
+              : firstKind === 'archive'
+                ? 'archive'
+                : firstKind === 'document' || firstKind === 'text'
+                  ? 'document'
+                  : 'generic';
+    res = { isEmpty: false, badgeKind, previewThumbUrl };
   }
 
-  const badgeKind: FolderBadgeKind =
-    firstKind === 'image'
-      ? 'image'
-      : firstKind === 'video'
-        ? 'video'
-        : firstKind === 'audio'
-          ? 'music'
-          : firstKind === 'apk'
-            ? 'apk'
-            : firstKind === 'archive'
-              ? 'archive'
-              : firstKind === 'document' || firstKind === 'text'
-                ? 'document'
-                : 'generic';
-
-  return { isEmpty: false, badgeKind, previewThumbUrl };
+  cache.set(folder.id, res);
+  return res;
 }
 
 export function getFolderVisualMeta(

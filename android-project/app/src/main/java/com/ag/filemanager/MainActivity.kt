@@ -372,7 +372,7 @@ class MainActivity : Activity() {
                 if (!isVideo && (lower.endsWith(".gif") || lower.endsWith(".svg"))) {
                     return Uri.fromFile(file).toString()
                 }
-                if (!isVideo && file.length() in 1L..24_576L) {
+                if (!isVideo && file.length() in 1L..32_768L) {
                     return Uri.fromFile(file).toString()
                 }
 
@@ -383,10 +383,10 @@ class MainActivity : Activity() {
                     return Uri.fromFile(thumbFile).toString()
                 }
                 if (!allowCreate) {
-                    return if (isVideo) null else Uri.fromFile(file).toString()
+                    return null
                 }
 
-                val maxDim = 256
+                val maxDim = 192
                 val rawBmp: Bitmap? = if (isVideo) {
                     var videoBmp: Bitmap? = try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -480,17 +480,17 @@ class MainActivity : Activity() {
                 }
 
                 FileOutputStream(thumbFile).use { fos ->
-                    finalBmp.compress(Bitmap.CompressFormat.JPEG, 78, fos)
+                    finalBmp.compress(Bitmap.CompressFormat.JPEG, 72, fos)
                 }
                 finalBmp.recycle()
 
                 if (thumbFile.exists() && thumbFile.length() > 0L) {
                     Uri.fromFile(thumbFile).toString()
                 } else {
-                    if (isVideo) null else Uri.fromFile(file).toString()
+                    null
                 }
             } catch (_: Exception) {
-                if (isVideo) null else Uri.fromFile(file).toString()
+                null
             }
         }
 
@@ -601,28 +601,15 @@ class MainActivity : Activity() {
             val sdRoot = getSdRootCanonical()
             val resolvedParentId = mapParentId(targetDir, internalRoot, sdRoot)
             val jsonArr = JSONArray()
-            var newThumbsBudget = 40
 
             for (file in list) {
-                val isDir = file.isDirectory
-                val allowCreate = if (!isDir && newThumbsBudget > 0) {
-                    val k = inferKind(file.name)
-                    if (k == "image" || k == "video") {
-                        newThumbsBudget--
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
                 jsonArr.put(
                     fileToJson(
                         file = file,
                         forcedParentId = resolvedParentId,
                         internalRoot = internalRoot,
                         sdRoot = sdRoot,
-                        allowThumbCreate = allowCreate
+                        allowThumbCreate = false
                     )
                 )
             }
@@ -667,7 +654,6 @@ class MainActivity : Activity() {
 
             var scannedCount = 0
             val maxEntries = 3500
-            var newThumbsBudget = 45
 
             while (queue.isNotEmpty() && scannedCount < maxEntries) {
                 val dir = queue.removeFirst()
@@ -688,29 +674,16 @@ class MainActivity : Activity() {
                         if (!name.startsWith(".")) {
                             queue.addLast(child)
                         }
-                        jsonArr.put(
-                            fileToJson(
-                                file = child,
-                                forcedParentId = resolvedParentId,
-                                internalRoot = internalRoot,
-                                sdRoot = sdRoot,
-                                allowThumbCreate = false
-                            )
-                        )
-                    } else {
-                        val kind = inferKind(name)
-                        val allowNewThumb = (kind == "image" || kind == "video") && newThumbsBudget > 0
-                        if (allowNewThumb) newThumbsBudget--
-                        jsonArr.put(
-                            fileToJson(
-                                file = child,
-                                forcedParentId = resolvedParentId,
-                                internalRoot = internalRoot,
-                                sdRoot = sdRoot,
-                                allowThumbCreate = allowNewThumb
-                            )
-                        )
                     }
+                    jsonArr.put(
+                        fileToJson(
+                            file = child,
+                            forcedParentId = resolvedParentId,
+                            internalRoot = internalRoot,
+                            sdRoot = sdRoot,
+                            allowThumbCreate = false
+                        )
+                    )
                     scannedCount++
                     if (scannedCount >= maxEntries) break
                 }

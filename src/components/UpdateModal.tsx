@@ -475,7 +475,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
   const percent = totalMb > 0 ? Math.min(100, Math.round((downloadedMb / totalMb) * 100)) : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/55 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/55">
       <div
         className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl"
         role="dialog"

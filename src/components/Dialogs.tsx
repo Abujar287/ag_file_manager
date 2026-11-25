@@ -50,7 +50,7 @@ export const NewItemDialog: React.FC<NewItemDialogProps> = ({ type, onCancel, on
     type === 'folder' ? 'New Folder' : type === 'text' ? 'New Text File' : 'New File';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
       <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 space-y-4">
         <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
         <form
@@ -184,7 +184,7 @@ export const PropertiesDialog: React.FC<PropertiesDialogProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
@@ -302,6 +302,9 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
   // Image zoom & pan state
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const imgElRef = useRef<HTMLImageElement>(null);
+  const swipeStageRef = useRef<HTMLDivElement>(null);
+  const liveTransformRef = useRef<{ x: number; y: number; zoom: number }>({ x: 0, y: 0, zoom: 1 });
   const dragRef = useRef<{ active: boolean; startX: number; startY: number; origX: number; origY: number }>({
     active: false,
     startX: 0,
@@ -360,17 +363,49 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
     onSelectFile(mediaSiblings[currentMediaIndex + 1]);
   };
 
+  const visibleFilmstrip = useMemo(() => {
+    if (mediaSiblings.length <= 1) return [];
+    const idx = currentMediaIndex >= 0 ? currentMediaIndex : 0;
+    const start = Math.max(0, idx - 8);
+    const end = Math.min(mediaSiblings.length, idx + 9);
+    return mediaSiblings.slice(start, end);
+  }, [mediaSiblings, currentMediaIndex]);
+
   useEffect(() => {
     setTextDraft(file?.content || '');
     setTextEditMode(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
+    liveTransformRef.current = { x: 0, y: 0, zoom: 1 };
+    if (swipeStageRef.current) {
+      swipeStageRef.current.style.transform = '';
+    }
     setShowOverlay(true);
     setPdfPageCount(0);
     setPdfPageIndex(0);
     setPdfPageDataUrl(null);
     setPdfZoom(1);
   }, [file]);
+
+  // Silently preload adjacent images for instant zero-flicker gallery swipes
+  useEffect(() => {
+    if (!file || currentMediaIndex < 0) return;
+    const neighbors = [
+      mediaSiblings[currentMediaIndex - 1],
+      mediaSiblings[currentMediaIndex + 1],
+    ];
+    for (const n of neighbors) {
+      if (!n || n.kind !== 'image') continue;
+      const src =
+        n.mediaUrl ||
+        (n.realPath ? `file://${encodeURI(n.realPath).replace(/#/g, '%23')}` : undefined);
+      if (src) {
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = src;
+      }
+    }
+  }, [file, currentMediaIndex, mediaSiblings]);
 
   // Keyboard navigation in Gallery Viewer
   useEffect(() => {
@@ -442,21 +477,33 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
 
   const clampZoom = (z: number) => Math.min(5, Math.max(1, Number(z.toFixed(2))));
 
+  const applyDirectImageTransform = (x: number, y: number, z: number) => {
+    liveTransformRef.current = { x, y, zoom: z };
+    const el = imgElRef.current;
+    if (el) {
+      el.style.transition = 'none';
+      el.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${z})`;
+    }
+  };
+
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       pinchDistRef.current = Math.hypot(dx, dy);
-      pinchBaseZoomRef.current = zoom;
+      pinchBaseZoomRef.current = liveTransformRef.current.zoom || zoom;
       dragRef.current.active = false;
       swipeNavRef.current.active = false;
+      if (swipeStageRef.current) swipeStageRef.current.style.transform = '';
     } else if (e.touches.length === 1) {
       const now = Date.now();
       if (isImage && now - lastTapRef.current < 280) {
         if (zoom > 1.1) {
+          liveTransformRef.current = { x: 0, y: 0, zoom: 1 };
           setZoom(1);
           setPan({ x: 0, y: 0 });
         } else {
+          liveTransformRef.current = { x: 0, y: 0, zoom: 2.4 };
           setZoom(2.4);
         }
         lastTapRef.current = 0;
@@ -490,30 +537,43 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx, dy);
       const nextZoom = clampZoom(pinchBaseZoomRef.current * (dist / pinchDistRef.current));
-      setZoom(nextZoom);
-      if (nextZoom === 1) setPan({ x: 0, y: 0 });
-    } else if (isImage && e.touches.length === 1 && dragRef.current.active && zoom > 1) {
-      setPan({
-        x: dragRef.current.origX + (e.touches[0].clientX - dragRef.current.startX),
-        y: dragRef.current.origY + (e.touches[0].clientY - dragRef.current.startY),
-      });
-    } else if (e.touches.length === 1 && swipeNavRef.current.active && zoom <= 1.05) {
+      const nx = nextZoom === 1 ? 0 : liveTransformRef.current.x;
+      const ny = nextZoom === 1 ? 0 : liveTransformRef.current.y;
+      applyDirectImageTransform(nx, ny, nextZoom);
+    } else if (isImage && e.touches.length === 1 && dragRef.current.active && liveTransformRef.current.zoom > 1) {
+      const nx = dragRef.current.origX + (e.touches[0].clientX - dragRef.current.startX);
+      const ny = dragRef.current.origY + (e.touches[0].clientY - dragRef.current.startY);
+      applyDirectImageTransform(nx, ny, liveTransformRef.current.zoom);
+    } else if (e.touches.length === 1 && swipeNavRef.current.active && liveTransformRef.current.zoom <= 1.05) {
       const dx = e.touches[0].clientX - swipeNavRef.current.startX;
       const dy = e.touches[0].clientY - swipeNavRef.current.startY;
       if (Math.abs(dy) > 36 && Math.abs(dy) > Math.abs(dx)) {
         swipeNavRef.current.active = false;
+        if (swipeStageRef.current) swipeStageRef.current.style.transform = '';
       } else {
         swipeNavRef.current.dx = dx;
+        if (swipeStageRef.current && mediaSiblings.length > 1) {
+          swipeStageRef.current.style.transform = `translate3d(${Math.round(dx * 0.4)}px, 0, 0)`;
+        }
       }
     }
   };
 
   const handleTouchEnd = () => {
-    if (swipeNavRef.current.active && zoom <= 1.05) {
+    if (pinchDistRef.current !== null || dragRef.current.active) {
+      const { x, y, zoom: committedZoom } = liveTransformRef.current;
+      if (imgElRef.current) imgElRef.current.style.transition = 'transform 120ms ease-out';
+      setZoom(committedZoom);
+      setPan({ x, y });
+    }
+    if (swipeStageRef.current) {
+      swipeStageRef.current.style.transform = '';
+    }
+    if (swipeNavRef.current.active && liveTransformRef.current.zoom <= 1.05) {
       const dx = swipeNavRef.current.dx;
-      if (dx <= -60) {
+      if (dx <= -55) {
         goNextMedia();
-      } else if (dx >= 60) {
+      } else if (dx >= 55) {
         goPrevMedia();
       }
     }
@@ -619,7 +679,8 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
 
         {/* Main Stage */}
         <div
-          className="relative flex-1 flex items-center justify-center overflow-hidden touch-none"
+          ref={swipeStageRef}
+          className="relative flex-1 flex items-center justify-center overflow-hidden touch-none will-change-transform"
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
@@ -633,6 +694,11 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
               onWheel={(e) => {
                 e.preventDefault();
                 const next = clampZoom(zoom + (e.deltaY < 0 ? 0.25 : -0.25));
+                liveTransformRef.current = {
+                  x: next === 1 ? 0 : pan.x,
+                  y: next === 1 ? 0 : pan.y,
+                  zoom: next,
+                };
                 setZoom(next);
                 if (next === 1) setPan({ x: 0, y: 0 });
               }}
@@ -648,28 +714,35 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
               }}
               onMouseMove={(e) => {
                 if (!dragRef.current.active || zoom <= 1) return;
-                setPan({
-                  x: dragRef.current.origX + (e.clientX - dragRef.current.startX),
-                  y: dragRef.current.origY + (e.clientY - dragRef.current.startY),
-                });
+                const nx = dragRef.current.origX + (e.clientX - dragRef.current.startX);
+                const ny = dragRef.current.origY + (e.clientY - dragRef.current.startY);
+                applyDirectImageTransform(nx, ny, zoom);
               }}
               onMouseUp={() => {
-                dragRef.current.active = false;
+                if (dragRef.current.active) {
+                  dragRef.current.active = false;
+                  setPan({ x: liveTransformRef.current.x, y: liveTransformRef.current.y });
+                }
               }}
               onMouseLeave={() => {
-                dragRef.current.active = false;
+                if (dragRef.current.active) {
+                  dragRef.current.active = false;
+                  setPan({ x: liveTransformRef.current.x, y: liveTransformRef.current.y });
+                }
               }}
             >
               <img
+                ref={imgElRef}
                 src={mediaSrc}
                 alt={file.name}
                 draggable={false}
+                decoding="async"
                 referrerPolicy="no-referrer"
                 style={{
-                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                  transition: dragRef.current.active ? 'none' : 'transform 120ms ease-out',
+                  transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+                  transition: 'transform 120ms ease-out',
                 }}
-                className="max-w-full max-h-full object-contain pointer-events-none"
+                className="max-w-full max-h-full object-contain pointer-events-none will-change-transform"
               />
             </div>
           ) : (
@@ -680,6 +753,7 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
               <video
                 key={file.id}
                 src={mediaSrc}
+                preload="metadata"
                 controls
                 autoPlay
                 playsInline
@@ -724,16 +798,16 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
           }`}
           onClick={(e) => e.stopPropagation()}
         >
-          {mediaSiblings.length > 1 && onSelectFile && (
+          {visibleFilmstrip.length > 1 && onSelectFile && (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 justify-start sm:justify-center">
-              {mediaSiblings.slice(0, 80).map((item) => {
+              {visibleFilmstrip.map((item) => {
                 const isActive = item.id === file.id;
                 return (
                   <button
                     key={item.id}
                     type="button"
                     onClick={() => onSelectFile(item)}
-                    className={`w-11 h-11 rounded-lg overflow-hidden shrink-0 border-2 transition-all ${
+                    className={`w-11 h-11 rounded-lg overflow-hidden shrink-0 border-2 transition-transform duration-100 ${
                       isActive
                         ? 'border-blue-500 scale-105 shadow-md'
                         : 'border-white/20 opacity-65 hover:opacity-100'
@@ -793,7 +867,7 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80">
       <div className="w-full max-w-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
         {/* Header */}
         <div className="px-4 sm:px-6 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
@@ -1106,7 +1180,7 @@ export const DeleteConfirmDialog: React.FC<DeleteConfirmDialogProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"
       onClick={onCancel}
     >
       <div

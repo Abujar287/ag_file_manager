@@ -52,3 +52,18 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.55);
 }
+
+button,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+.cv-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
+}
+
+.cv-tile {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 150px;
+}

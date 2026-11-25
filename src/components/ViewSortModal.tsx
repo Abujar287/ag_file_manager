@@ -49,7 +49,7 @@ export const ViewSortModal: React.FC<ViewSortModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/50 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 bg-black/55"
       onClick={onClose}
     >
       <div

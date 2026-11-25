@@ -136,10 +136,10 @@ const FileBrowserRow = memo<RowProps>(
             onPointerCancel={onCancelLongPress}
             onContextMenu={(e) => onContextSelect(node.id, e)}
             onClick={() => onRowClick(node)}
-            className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer select-none bg-slate-200 dark:bg-slate-800 border transition-all ${
+            className={`cv-tile group relative aspect-square rounded-xl overflow-hidden cursor-pointer select-none bg-slate-200 dark:bg-slate-800 border transition-transform duration-100 ${
               selected
                 ? 'border-blue-600 ring-2 ring-blue-500/70 scale-[0.97]'
-                : 'border-slate-200/80 dark:border-slate-800 hover:brightness-95'
+                : 'border-slate-200/80 dark:border-slate-800'
             }`}
           >
             <FileIcon
@@ -194,7 +194,7 @@ const FileBrowserRow = memo<RowProps>(
           onPointerCancel={onCancelLongPress}
           onContextMenu={(e) => onContextSelect(node.id, e)}
           onClick={() => onRowClick(node)}
-          className={`rounded-2xl border cursor-pointer select-none transition-colors overflow-hidden flex flex-col ${
+          className={`cv-tile rounded-2xl border cursor-pointer select-none overflow-hidden flex flex-col ${
             selected
               ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-500 ring-1 ring-blue-500/40'
               : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
@@ -258,7 +258,7 @@ const FileBrowserRow = memo<RowProps>(
           onPointerCancel={onCancelLongPress}
           onContextMenu={(e) => onContextSelect(node.id, e)}
           onClick={() => onRowClick(node)}
-          className={`px-4 sm:px-6 py-2 flex items-center gap-3 cursor-pointer select-none transition-colors ${
+          className={`cv-row px-4 sm:px-6 py-2 flex items-center gap-3 cursor-pointer select-none ${
             selected
               ? 'bg-blue-50/90 dark:bg-blue-950/40'
               : 'hover:bg-white/70 dark:hover:bg-slate-900/60'
@@ -318,7 +318,7 @@ const FileBrowserRow = memo<RowProps>(
         onPointerCancel={onCancelLongPress}
         onContextMenu={(e) => onContextSelect(node.id, e)}
         onClick={() => onRowClick(node)}
-        className={`min-h-[64px] px-4 sm:px-6 py-2.5 flex items-center gap-3.5 cursor-pointer select-none transition-colors ${
+        className={`cv-row min-h-[64px] px-4 sm:px-6 py-2.5 flex items-center gap-3.5 cursor-pointer select-none ${
           selected
             ? 'bg-blue-50/90 dark:bg-blue-950/40'
             : 'hover:bg-white/70 dark:hover:bg-slate-900/60'
@@ -420,7 +420,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
   const selectedIdsRef = useRef<string[]>(selectedIds);
   selectedIdsRef.current = selectedIds;
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const [visibleLimit, setVisibleLimit] = useState(120);
+  const [visibleLimit, setVisibleLimit] = useState(40);
   const isMediaCategory =
     mode === 'category' && (category === 'images' || category === 'videos');
   const [galleryViewOverride, setGalleryViewOverride] = useState<'grid' | 'list' | null>(null);
@@ -433,7 +433,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
   useEffect(() => {
     setSelectedIds([]);
     setMoreMenuOpen(false);
-    setVisibleLimit(120);
+    setVisibleLimit(40);
     setGalleryViewOverride(null);
   }, [mode, folderId, category]);
 
@@ -510,10 +510,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
-          setVisibleLimit((prev) => Math.min(sortedItems.length, prev + 100));
+          setVisibleLimit((prev) => Math.min(sortedItems.length, prev + 60));
         }
       },
-      { rootMargin: '250px' }
+      { rootMargin: '450px' }
     );
     observer.observe(el);
     return () => observer.disconnect();

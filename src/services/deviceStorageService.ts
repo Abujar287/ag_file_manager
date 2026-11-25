@@ -403,7 +403,36 @@ export function uninstallInstalledApps(packageNames: string[]): boolean {
 
 const nativeThumbCache = new Map<string, string | null>();
 const pendingThumbListeners = new Map<string, Array<(url: string | null) => void>>();
+const thumbRequestQueue: string[] = [];
+const activeThumbRequests = new Set<string>();
+const MAX_CONCURRENT_THUMB_REQUESTS = 3;
 let thumbListenerInitialized = false;
+
+function pumpThumbQueue() {
+  const bridge = getNativeBridge();
+  if (!bridge || typeof bridge.getMediaThumbnailAsync !== 'function') return;
+
+  while (
+    activeThumbRequests.size < MAX_CONCURRENT_THUMB_REQUESTS &&
+    thumbRequestQueue.length > 0
+  ) {
+    // LIFO so the most recently scrolled-into-view items load first
+    const nextPath = thumbRequestQueue.pop()!;
+    if (nativeThumbCache.has(nextPath) || activeThumbRequests.has(nextPath)) {
+      continue;
+    }
+    activeThumbRequests.add(nextPath);
+    const reqId = `thumb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    try {
+      bridge.getMediaThumbnailAsync(reqId, nextPath);
+    } catch {
+      activeThumbRequests.delete(nextPath);
+      const waiters = pendingThumbListeners.get(nextPath);
+      pendingThumbListeners.delete(nextPath);
+      waiters?.forEach((cb) => cb(null));
+    }
+  }
+}
 
 function ensureThumbEventListener() {
   if (thumbListenerInitialized || typeof window === 'undefined') return;
@@ -416,6 +445,7 @@ function ensureThumbEventListener() {
     };
     const path = detail?.path;
     if (!path) return;
+    activeThumbRequests.delete(path);
     const url = detail.thumbnailUrl ? detail.thumbnailUrl : null;
     nativeThumbCache.set(path, url);
     const waiters = pendingThumbListeners.get(path);
@@ -423,6 +453,7 @@ function ensureThumbEventListener() {
       pendingThumbListeners.delete(path);
       waiters.forEach((cb) => cb(url));
     }
+    pumpThumbQueue();
   });
 }
 
@@ -449,14 +480,12 @@ export function requestNativeMediaThumbnail(path: string): Promise<string | null
       return;
     }
     pendingThumbListeners.set(path, [resolve]);
-    const reqId = `thumb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    try {
-      bridge.getMediaThumbnailAsync!(reqId, path);
-    } catch {
-      const waiters = pendingThumbListeners.get(path);
-      pendingThumbListeners.delete(path);
-      waiters?.forEach((cb) => cb(null));
+    if (!activeThumbRequests.has(path)) {
+      const qIdx = thumbRequestQueue.indexOf(path);
+      if (qIdx >= 0) thumbRequestQueue.splice(qIdx, 1);
+      thumbRequestQueue.push(path);
     }
+    pumpThumbQueue();
   });
 }
 
