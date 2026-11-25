@@ -24,10 +24,14 @@ import {
   SD_TOTAL_BYTES,
 } from '../data/initialFileSystem';
 import { formatBytes } from '../utils/formatters';
+import { DeviceStorageStats } from '../services/deviceStorageService';
 
 interface HomeDashboardProps {
   files: FileNode[];
   sdCardMounted: boolean;
+  storageStats?: DeviceStorageStats | null;
+  hasPermission?: boolean;
+  onRequestPermission?: () => void;
   onOpenFolder: (folderId: string) => void;
   onOpenTool: (tool: AnalyzerToolType) => void;
   onOpenCategory: (category: CategoryType) => void;
@@ -189,6 +193,9 @@ const MicroSdCard: React.FC<MicroSdCardProps> = ({
 export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   files,
   sdCardMounted,
+  storageStats,
+  hasPermission = true,
+  onRequestPermission,
   onOpenFolder,
   onOpenTool,
   onOpenCategory,
@@ -216,14 +223,23 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     }
   }
 
-  const internalUsed = Math.min(
-    INTERNAL_TOTAL_BYTES,
-    INTERNAL_SYSTEM_RESERVED_BYTES + internalFilesBytes
-  );
-  const internalPct = Math.round((internalUsed / INTERNAL_TOTAL_BYTES) * 100);
+  // Live dynamic storage capacity
+  const finalInternalTotal = storageStats?.internal?.totalBytes || INTERNAL_TOTAL_BYTES;
+  const finalInternalUsed =
+    storageStats?.internal?.usedBytes ??
+    Math.min(finalInternalTotal, INTERNAL_SYSTEM_RESERVED_BYTES + internalFilesBytes);
+  const finalInternalPct =
+    storageStats?.internal?.usedPercent ??
+    Math.round((finalInternalUsed / finalInternalTotal) * 100);
 
-  const sdUsed = Math.min(SD_TOTAL_BYTES, sdFilesBytes);
-  const sdPct = sdCardMounted ? Math.round((sdUsed / SD_TOTAL_BYTES) * 100) : 0;
+  const finalSdMounted = storageStats?.external ? storageStats.external.isMounted : sdCardMounted;
+  const finalSdTotal = storageStats?.external?.totalBytes || SD_TOTAL_BYTES;
+  const finalSdUsed =
+    storageStats?.external?.usedBytes ?? Math.min(finalSdTotal, sdFilesBytes);
+  const finalSdPct = finalSdMounted
+    ? (storageStats?.external?.usedPercent ??
+      Math.round((finalSdUsed / finalSdTotal) * 100))
+    : 0;
 
   // Category counts
   const activeFiles = files.filter((n) => !n.trashed && n.kind !== 'folder');
@@ -308,6 +324,29 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
 
   return (
     <div className="max-w-5xl mx-auto px-2.5 sm:px-6 py-4 sm:py-5 space-y-5 sm:space-y-6">
+      {/* Permission Request Prompt if not yet granted */}
+      {!hasPermission && (
+        <section aria-label="Storage Permission Banner">
+          <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
+            <div className="space-y-0.5">
+              <div className="text-xs sm:text-sm font-bold flex items-center gap-1.5">
+                <span>📱 Scan Your Phone Storage</span>
+              </div>
+              <p className="text-[11px] sm:text-xs text-blue-100">
+                Grant storage permission to show all your device files, photos, folders, and actual storage capacity.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onRequestPermission}
+              className="shrink-0 px-4 py-2 rounded-xl bg-white text-blue-700 hover:bg-blue-50 text-xs font-bold transition-all shadow-sm active:scale-95"
+            >
+              Allow Permission
+            </button>
+          </div>
+        </section>
+      )}
+
       {/* 1. Storage Overview — Side-by-side MicroSD Card Design matching user reference */}
       <section aria-label="Storage Overview">
         <div className="grid grid-cols-2 gap-2 sm:gap-4">
@@ -315,9 +354,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           <MicroSdCard
             id="internal"
             title="Internal Storage"
-            percent={internalPct}
-            usedBytes={internalUsed}
-            totalBytes={INTERNAL_TOTAL_BYTES}
+            percent={finalInternalPct}
+            usedBytes={finalInternalUsed}
+            totalBytes={finalInternalTotal}
             isMounted={true}
             onClick={() => onOpenFolder('internal_root')}
           />
@@ -326,10 +365,10 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
           <MicroSdCard
             id="external"
             title="External Storage"
-            percent={sdPct}
-            usedBytes={sdUsed}
-            totalBytes={SD_TOTAL_BYTES}
-            isMounted={sdCardMounted}
+            percent={finalSdPct}
+            usedBytes={finalSdUsed}
+            totalBytes={finalSdTotal}
+            isMounted={finalSdMounted}
             unmountedText="No card found"
             onClick={() => onOpenFolder('sd_root')}
           />

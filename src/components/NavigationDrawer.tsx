@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { ActiveScreen, AppSettings } from '../types/fileManager';
+import { AppLogo } from './AppLogo';
 
 interface NavigationDrawerProps {
   open: boolean;
@@ -52,12 +53,15 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
     <div className="flex flex-col h-full bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 select-none">
       {/* Drawer Header */}
       <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-        <div>
-          <div className="text-base font-bold text-slate-900 dark:text-slate-100">
-            AG File Manager
-          </div>
-          <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
-            v{settings.currentVersionName} · File Manager
+        <div className="flex items-center gap-3">
+          <AppLogo size={36} />
+          <div>
+            <div className="text-base font-bold text-slate-900 dark:text-slate-100">
+              AG File Manager
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
+              v{settings.currentVersionName} · File Manager
+            </div>
           </div>
         </div>
         <button

@@ -24,6 +24,17 @@ import { UpdateModal } from './components/UpdateModal';
 import { SettingsView } from './components/SettingsView';
 import { AboutView } from './components/AboutView';
 import { FileViewerDialog, NewItemDialog, PropertiesDialog } from './components/Dialogs';
+import { ExitConfirmDialog } from './components/ExitConfirmDialog';
+import { StoragePermissionModal } from './components/StoragePermissionModal';
+import {
+  DeviceStorageStats,
+  checkStoragePermissionGranted,
+  exitApplication,
+  getLiveStorageStats,
+  getNativeBridge,
+  isRunningInAndroidApp,
+  requestStoragePermission,
+} from './services/deviceStorageService';
 
 const LATEST_VERSION_NAME = '1.2.0';
 
@@ -139,6 +150,13 @@ export default function App() {
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  // Exit dialog & storage permission states (Points 1, 2, 6)
+  const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
+  const [storagePermissionOpen, setStoragePermissionOpen] = useState(false);
+  const [hasStoragePermission, setHasStoragePermission] = useState(true);
+  const [storageStats, setStorageStats] = useState<DeviceStorageStats | null>(null);
+  const folderScanInputRef = useRef<HTMLInputElement>(null);
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
   };
@@ -201,6 +219,48 @@ export default function App() {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const activeScreen = activeTab.screen;
 
+  // Initialize live device storage stats & check permissions
+  useEffect(() => {
+    let mounted = true;
+    const initStorage = async () => {
+      const granted = await checkStoragePermissionGranted();
+      if (!mounted) return;
+      setHasStoragePermission(granted);
+
+      const totalFilesBytes = files.reduce(
+        (acc, f) => acc + (f.kind === 'folder' ? 0 : f.size),
+        0
+      );
+      const stats = await getLiveStorageStats(totalFilesBytes);
+      if (!mounted) return;
+      setStorageStats(stats);
+
+      const bridge = getNativeBridge();
+      if (bridge && typeof bridge.listDirectory === 'function') {
+        try {
+          const jsonStr = bridge.listDirectory('/storage/emulated/0');
+          if (jsonStr) {
+            const parsed = JSON.parse(jsonStr);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setFiles((prev) => {
+                const roots = prev.filter(
+                  (n) => n.id === 'internal_root' || n.id === 'sd_root'
+                );
+                return [...roots, ...parsed];
+              });
+            }
+          }
+        } catch (e) {
+          console.warn('Native directory reading failed:', e);
+        }
+      }
+    };
+    initStorage();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const navigateInActiveTab = (screen: ActiveScreen) => {
     setSearchOpen(false);
     setSearchQuery('');
@@ -220,6 +280,170 @@ export default function App() {
     setTabs((prev) =>
       prev.map((t) => (t.id === activeTab.id ? { ...t, title, screen } : t))
     );
+  };
+
+  // Point 6: Hardware/System/Browser Back button logic:
+  // Non-home screens/folders navigate back towards Home;
+  // On Home screen, pressing back shows the Exit Confirmation Dialog!
+  const handleBackAction = () => {
+    if (exitConfirmOpen) {
+      setExitConfirmOpen(false);
+      return;
+    }
+    if (storagePermissionOpen) {
+      setStoragePermissionOpen(false);
+      return;
+    }
+    if (viewingFile) {
+      setViewingFile(null);
+      return;
+    }
+    if (propertiesNode) {
+      setPropertiesNode(null);
+      return;
+    }
+    if (renameTargetIds) {
+      setRenameTargetIds(null);
+      return;
+    }
+    if (newItemType) {
+      setNewItemType(null);
+      return;
+    }
+    if (updateModalOpen) {
+      setUpdateModalOpen(false);
+      return;
+    }
+    if (drawerOpen) {
+      setDrawerOpen(false);
+      return;
+    }
+    if (searchOpen) {
+      setSearchOpen(false);
+      setSearchQuery('');
+      return;
+    }
+
+    if (activeScreen.type === 'folder') {
+      const currentFolder = files.find((f) => f.id === activeScreen.folderId);
+      if (currentFolder && currentFolder.parentId && currentFolder.parentId !== null) {
+        navigateInActiveTab({ type: 'folder', folderId: currentFolder.parentId });
+        return;
+      }
+      navigateInActiveTab({ type: 'home' });
+      return;
+    }
+
+    if (activeScreen.type !== 'home') {
+      navigateInActiveTab({ type: 'home' });
+      return;
+    }
+
+    // Already on Home: show Exit confirmation dialog!
+    setExitConfirmOpen(true);
+  };
+
+  // Wire to Android native onBackPressed via window.handleSystemBackButton
+  useEffect(() => {
+    window.handleSystemBackButton = () => {
+      handleBackAction();
+    };
+    return () => {
+      delete window.handleSystemBackButton;
+    };
+  });
+
+  // Wire to browser back button (popstate)
+  useEffect(() => {
+    window.history.replaceState({ screen: 'home' }, '');
+    window.history.pushState({ screen: 'active' }, '');
+
+    const onPopState = () => {
+      window.history.pushState({ screen: 'active' }, '');
+      handleBackAction();
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  });
+
+  const handleRequestStoragePermission = async () => {
+    await requestStoragePermission();
+    setHasStoragePermission(true);
+    setStoragePermissionOpen(false);
+    showToast('Storage permission granted');
+
+    const totalFilesBytes = files.reduce(
+      (acc, f) => acc + (f.kind === 'folder' ? 0 : f.size),
+      0
+    );
+    const stats = await getLiveStorageStats(totalFilesBytes);
+    setStorageStats(stats);
+
+    if (!isRunningInAndroidApp()) {
+      folderScanInputRef.current?.click();
+    }
+  };
+
+  const handleScanFolder = (eventFileList: FileList | null) => {
+    if (!eventFileList || eventFileList.length === 0) return;
+    const now = Date.now();
+    const createdFolderPaths = new Map<string, string>();
+    createdFolderPaths.set('', 'internal_root');
+
+    const newNodes: FileNode[] = [];
+    const scannedFiles = Array.from(eventFileList);
+
+    scannedFiles.forEach((f) => {
+      const relPath = (f as any).webkitRelativePath || f.name;
+      const parts = relPath.split('/');
+      const fileName = parts.pop() || f.name;
+
+      let currentPath = '';
+      let parentNodeId = 'internal_root';
+
+      parts.forEach((part: string) => {
+        const nextPath = currentPath ? `${currentPath}/${part}` : part;
+        if (!createdFolderPaths.has(nextPath)) {
+          const folderId = `dir_${Math.random().toString(36).slice(2, 8)}_${now}`;
+          createdFolderPaths.set(nextPath, folderId);
+          newNodes.push({
+            id: folderId,
+            name: part,
+            parentId: parentNodeId,
+            kind: 'folder',
+            size: 0,
+            modifiedAt: now,
+          });
+        }
+        parentNodeId = createdFolderPaths.get(nextPath)!;
+        currentPath = nextPath;
+      });
+
+      const kind = inferFileKind(fileName);
+      newNodes.push({
+        id: `scanned_${Math.random().toString(36).slice(2, 8)}_${now}`,
+        name: fileName,
+        parentId: parentNodeId,
+        kind,
+        size: f.size,
+        modifiedAt: f.lastModified || now,
+        hidden: fileName.startsWith('.'),
+      });
+    });
+
+    setFiles((prev) => {
+      const roots = prev.filter((n) => n.id === 'internal_root' || n.id === 'sd_root');
+      return [...roots, ...newNodes];
+    });
+
+    setHasStoragePermission(true);
+    try {
+      localStorage.setItem('ag_fm_permission_granted', 'true');
+    } catch {
+      // ignore
+    }
+    showToast(`Scanned ${scannedFiles.length} item(s) from phone storage`);
   };
 
   const handleNewTab = () => {
@@ -565,7 +789,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100">
-      {/* Hidden file picker for importing real files from device */}
+      {/* Hidden file picker for importing individual real files from device */}
       <input
         ref={fileUploadInputRef}
         type="file"
@@ -573,6 +797,21 @@ export default function App() {
         className="hidden"
         onChange={(e) => {
           handleUploadDeviceFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
+
+      {/* Hidden folder scanner for reading whole directories from phone storage */}
+      <input
+        ref={folderScanInputRef}
+        type="file"
+        // @ts-expect-error webkitdirectory is standard in HTML5 directory pickers
+        webkitdirectory=""
+        directory=""
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          handleScanFolder(e.target.files);
           e.target.value = '';
         }}
       />
@@ -698,6 +937,9 @@ export default function App() {
             <HomeDashboard
               files={files}
               sdCardMounted={settings.sdCardMounted}
+              storageStats={storageStats}
+              hasPermission={hasStoragePermission}
+              onRequestPermission={() => setStoragePermissionOpen(true)}
               onOpenFolder={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
               onOpenTool={(tool) => navigateInActiveTab({ type: 'analyzer', tool })}
               onOpenCategory={(category) =>
@@ -805,6 +1047,25 @@ export default function App() {
         onClose={() => setUpdateModalOpen(false)}
         onSaveApkToPublicDownloads={handleSaveApkToPublicDownloads}
         onInstallCompleted={handleInstallCompleted}
+      />
+
+      {/* Point 6: Exit Confirmation Popup */}
+      <ExitConfirmDialog
+        open={exitConfirmOpen}
+        onCancel={() => setExitConfirmOpen(false)}
+        onConfirmExit={() => exitApplication()}
+      />
+
+      {/* Point 1 & 2: Real Storage & Media Permission Request Modal */}
+      <StoragePermissionModal
+        open={storagePermissionOpen}
+        onClose={() => setStoragePermissionOpen(false)}
+        isAndroid={isRunningInAndroidApp()}
+        onRequestPermission={handleRequestStoragePermission}
+        onSelectFolder={() => {
+          setStoragePermissionOpen(false);
+          folderScanInputRef.current?.click();
+        }}
       />
 
       {/* Lightweight Toast */}

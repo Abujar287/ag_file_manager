@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Package } from 'lucide-react';
 import { UpdateScenario } from '../types/fileManager';
+import { triggerSystemDownload } from '../services/deviceStorageService';
+import { AppLogo } from './AppLogo';
 
 interface UpdateModalProps {
   open: boolean;
@@ -86,10 +87,17 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
     setDownloadedMb(0);
     setPhase('downloading');
 
+    // Trigger download in system Download Manager / Internet Download Manager
+    triggerSystemDownload(
+      `/downloads/${targetFilename}`,
+      targetFilename,
+      `AG File Manager v${newVersion}`
+    );
+
     clearTimers();
     let current = 0;
 
-    // Simulates polling DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR & COLUMN_TOTAL_SIZE_BYTES
+    // Simulates live DownloadManager query progress
     timerRef.current = window.setInterval(() => {
       current = Math.min(TOTAL_APK_MB, current + 0.18);
       setDownloadedMb(current);
@@ -107,18 +115,6 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
 
         // Save directly into /storage/emulated/0/Download/ (Internal Storage -> Download)
         onSaveApkToPublicDownloads(targetFilename, TOTAL_APK_BYTES);
-
-        // Trigger actual browser download of the release APK file
-        try {
-          const a = document.createElement('a');
-          a.href = `/downloads/${targetFilename}`;
-          a.download = targetFilename;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        } catch {
-          // ignore download triggers if blocked
-        }
 
         if (scenario === 'permission_required') {
           setPhase('permission_prompt');
@@ -270,8 +266,8 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         {phase === 'installer_confirm' && (
           <div className="p-6 space-y-5">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
-                <Package size={22} />
+              <div className="shrink-0">
+                <AppLogo size={38} />
               </div>
               <div className="min-w-0">
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
@@ -309,8 +305,8 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         {phase === 'installing' && (
           <div className="p-6 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-400 flex items-center justify-center shrink-0">
-                <Package size={22} />
+              <div className="shrink-0">
+                <AppLogo size={38} />
               </div>
               <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 AG File Manager
@@ -331,8 +327,8 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         {phase === 'installed' && (
           <div className="p-6 space-y-5">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-                <Package size={22} />
+              <div className="shrink-0">
+                <AppLogo size={38} />
               </div>
               <div>
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">

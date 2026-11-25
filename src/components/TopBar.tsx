@@ -18,6 +18,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { SortBy, SortOrder, TabWindow, ViewMode } from '../types/fileManager';
+import { AppLogo } from './AppLogo';
 
 interface TopBarProps {
   onOpenDrawer: () => void;
@@ -135,19 +136,22 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         ) : (
           <>
-            {/* Left: 3-Line Drawer Icon + App Title */}
-            <div className="flex items-center gap-2 min-w-0">
+            {/* Left: 3-Line Drawer Icon + App Logo + App Title */}
+            <div className="flex items-center gap-2.5 min-w-0">
               <button
                 type="button"
                 onClick={onOpenDrawer}
-                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600"
+                className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600"
                 aria-label="Open navigation menu"
               >
                 <Menu size={22} />
               </button>
-              <h1 className="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 truncate">
-                AG File Manager
-              </h1>
+              <div className="flex items-center gap-2 min-w-0">
+                <AppLogo size={26} />
+                <h1 className="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 truncate">
+                  AG File Manager
+                </h1>
+              </div>
             </div>
 
             {/* Right: Home Icon Button, Search Icon Button, 3-Dot Overflow Menu */}

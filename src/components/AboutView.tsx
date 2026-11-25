@@ -1,6 +1,6 @@
-import React from 'react';
-import { ArrowLeft, DownloadCloud, Folder } from 'lucide-react';
+import { ArrowLeft, DownloadCloud } from 'lucide-react';
 import { AppSettings } from '../types/fileManager';
+import { AppLogo } from './AppLogo';
 
 interface AboutViewProps {
   settings: AppSettings;
@@ -29,9 +29,7 @@ export const AboutView: React.FC<AboutViewProps> = ({
 
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 space-y-6">
         <div className="flex items-center gap-4">
-          <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white flex items-center justify-center shrink-0">
-            <Folder size={28} fill="currentColor" fillOpacity={0.2} />
-          </div>
+          <AppLogo size={56} />
           <div>
             <h3 className="text-xl font-bold text-slate-900 dark:text-slate-100">
               AG File Manager

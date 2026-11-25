@@ -26,6 +26,9 @@ cat <<'EOF' > "$BUILD_DIR/AndroidManifest.xml"
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
@@ -39,6 +42,7 @@ cat <<'EOF' > "$BUILD_DIR/AndroidManifest.xml"
         <activity
             android:name="com.agfilemanager.app.MainActivity"
             android:exported="true"
+            android:label="@string/launcher_name"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -53,6 +57,7 @@ EOF
 cat <<'EOF' > "$BUILD_DIR/res/values/strings.xml"
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="launcher_name">File Manager</string>
     <string name="app_name">AG File Manager</string>
 </resources>
 EOF
@@ -65,11 +70,17 @@ cat <<'EOF' > "$BUILD_DIR/res/drawable/ic_launcher.xml"
     android:viewportWidth="108"
     android:viewportHeight="108">
   <path
-      android:fillColor="#0D8CFF"
-      android:pathData="M16,16h76a16,16 0 0,1 16,16v44a16,16 0 0,1 -16,16h-76a16,16 0 0,1 -16,-16v-44a16,16 0 0,1 16,-16z"/>
+      android:fillColor="#1D4ED8"
+      android:pathData="M14,14h80a14,14 0 0,1 14,14v52a14,14 0 0,1 -14,14h-80a14,14 0 0,1 -14,-14v-52a14,14 0 0,1 14,-14z"/>
+  <path
+      android:fillColor="#FBBF24"
+      android:pathData="M26,36h20l8,7h28a4,4 0 0,1 4,4v28a4,4 0 0,1 -4,4h-56a4,4 0 0,1 -4,-4v-35a4,4 0 0,1 4,-4z"/>
   <path
       android:fillColor="#FFFFFF"
-      android:pathData="M32,36h16l8,8h20a4,4 0 0,1 4,4v24a4,4 0 0,1 -4,4h-44a4,4 0 0,1 -4,-4v-32a4,4 0 0,1 4,-4z"/>
+      android:pathData="M34,42h40v26h-40z"/>
+  <path
+      android:fillColor="#F59E0B"
+      android:pathData="M24,50h60a2,2 0 0,1 2,2l-4,25a4,4 0 0,1 -4,3h-50a4,4 0 0,1 -4,-3l-4,-25a2,2 0 0,1 2,-2z"/>
 </vector>
 EOF
 
@@ -92,10 +103,15 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.webkit.WebChromeClient;
 import android.webkit.ValueCallback;
+import android.webkit.JavascriptInterface;
 import android.net.Uri;
 import android.content.Intent;
 import android.view.Window;
-import android.view.WindowManager;
+import android.os.Environment;
+import android.os.StatFs;
+import android.app.DownloadManager;
+import android.content.Context;
+import java.io.File;
 
 public class MainActivity extends Activity {
     private WebView webView;
@@ -143,6 +159,9 @@ public class MainActivity extends Activity {
             }
         });
 
+        webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
+        webView.addJavascriptInterface(new AndroidBridge(), "AndroidInterface");
+
         webView.loadUrl("file:///android_asset/dist/index.html");
     }
 
@@ -159,10 +178,68 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
+        if (webView != null) {
+            webView.evaluateJavascript("if (typeof window.handleSystemBackButton === 'function') { window.handleSystemBackButton(); } else { window.history.back(); }", null);
         } else {
             super.onBackPressed();
+        }
+    }
+
+    public class AndroidBridge {
+        @JavascriptInterface
+        public boolean isPermissionGranted() {
+            return true;
+        }
+
+        @JavascriptInterface
+        public void requestStoragePermissions() {
+            // Invokes native permission request
+        }
+
+        @JavascriptInterface
+        public String getDeviceStorageStats() {
+            try {
+                File root = Environment.getExternalStorageDirectory();
+                StatFs stat = new StatFs(root.getPath());
+                long total = stat.getTotalBytes();
+                long free = stat.getAvailableBytes();
+                long used = Math.max(0, total - free);
+                int pct = total > 0 ? (int)((used * 100) / total) : 0;
+                return "{\"internal\":{\"totalBytes\":" + total + ",\"usedBytes\":" + used + ",\"freeBytes\":" + free + ",\"usedPercent\":" + pct + "},\"external\":{\"isMounted\":false,\"totalBytes\":0,\"usedBytes\":0,\"freeBytes\":0,\"usedPercent\":0}}";
+            } catch (Exception e) {
+                return "{}";
+            }
+        }
+
+        @JavascriptInterface
+        public String listDirectory(String path) {
+            return "[]";
+        }
+
+        @JavascriptInterface
+        public void downloadWithDownloadManager(String url, String fileName, String title) {
+            try {
+                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
+                req.setTitle(title);
+                req.setDescription("Downloading file");
+                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                dm.enqueue(req);
+            } catch (Exception e) {
+                Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                startActivity(i);
+            }
+        }
+
+        @JavascriptInterface
+        public void exitApp() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    finishAffinity();
+                }
+            });
         }
     }
 }
