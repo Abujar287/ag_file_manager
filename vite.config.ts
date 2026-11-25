@@ -26,7 +26,7 @@ export default defineConfig(() => {
             fs.cpSync(srcAssets, distAssets, {recursive: true, force: true});
           }
         },
-      },
+      } as any,
     ],
     resolve: {
       alias: {
