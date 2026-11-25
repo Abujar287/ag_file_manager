@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { UpdateScenario } from '../types/fileManager';
 import {
+  fetchNativeUpdateManifest,
   getNativeBridge,
   getRunningAppVersion,
   isRunningInAndroidApp,
@@ -131,6 +132,20 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         return current;
       };
 
+      // On Android WebView, native HttpURLConnection bypasses GitHub 302 CORS restrictions
+      if (isRunningInAndroidApp()) {
+        const nativeManifest = await fetchNativeUpdateManifest();
+        if (nativeManifest) {
+          best = pickBest(best, {
+            versionCode: nativeManifest.versionCode,
+            versionName: nativeManifest.versionName,
+            apkUrl:
+              nativeManifest.apkUrl ||
+              `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${nativeManifest.versionName}/AG_File_Manager_v${nativeManifest.versionName}.apk`,
+          });
+        }
+      }
+
       for (const url of urls) {
         try {
           const res = await fetch(url, { cache: 'no-store' });
@@ -206,13 +221,16 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           apkUrl: `./downloads/AG_File_Manager_v${newVersion || effectiveCurrentName}.apk`,
         };
         setRemoteManifest(fallbackManifest);
-        setPhase(effectiveCurrentName === newVersion ? 'up_to_date' : 'prompt');
+        setPhase(compareVersionNames(fallbackManifest.versionName, effectiveCurrentName) > 0 ? 'prompt' : 'up_to_date');
         return;
       }
 
       setRemoteManifest(data);
 
-      if (data.versionCode > effectiveCurrentCode) {
+      const hasUpdate =
+        data.versionCode > effectiveCurrentCode ||
+        compareVersionNames(data.versionName, effectiveCurrentName) > 0;
+      if (hasUpdate) {
         setPhase('prompt');
       } else {
         setPhase('up_to_date');

@@ -78,6 +78,7 @@ export interface AndroidBridgeInterface {
   uninstallApp?: (packageName: string) => boolean;
   uninstallApps?: (packagesJson: string) => boolean;
   getMediaThumbnailAsync?: (requestId: string, path: string) => void;
+  fetchLatestUpdateManifestAsync?: (requestId: string) => void;
 }
 
 declare global {
@@ -455,6 +456,54 @@ export function requestNativeMediaThumbnail(path: string): Promise<string | null
       const waiters = pendingThumbListeners.get(path);
       pendingThumbListeners.delete(path);
       waiters?.forEach((cb) => cb(null));
+    }
+  });
+}
+
+export interface NativeUpdateManifest {
+  versionCode: number;
+  versionName: string;
+  apkUrl: string;
+}
+
+export function fetchNativeUpdateManifest(timeoutMs = 10000): Promise<NativeUpdateManifest | null> {
+  const bridge = getNativeBridge();
+  if (!bridge || typeof bridge.fetchLatestUpdateManifestAsync !== 'function' || typeof window === 'undefined') {
+    return Promise.resolve(null);
+  }
+  const reqId = `upd_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (val: NativeUpdateManifest | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener('android_update_manifest_result', onResult);
+      resolve(val);
+    };
+    const onResult = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as {
+        requestId?: string;
+        manifest?: Partial<NativeUpdateManifest>;
+      };
+      if (!detail || detail.requestId !== reqId) return;
+      const m = detail.manifest;
+      if (m && typeof m.versionCode === 'number' && typeof m.versionName === 'string' && m.versionName) {
+        finish({
+          versionCode: m.versionCode,
+          versionName: m.versionName,
+          apkUrl: m.apkUrl || '',
+        });
+      } else {
+        finish(null);
+      }
+    };
+    const timer = window.setTimeout(() => finish(null), timeoutMs);
+    window.addEventListener('android_update_manifest_result', onResult);
+    try {
+      bridge.fetchLatestUpdateManifestAsync!(reqId);
+    } catch {
+      finish(null);
     }
   });
 }

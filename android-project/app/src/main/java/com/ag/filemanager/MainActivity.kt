@@ -45,6 +45,8 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
@@ -1923,6 +1925,117 @@ class MainActivity : Activity() {
                     put("compatible", true)
                     put("code", "ok")
                 }.toString()
+            }
+        }
+
+        @JavascriptInterface
+        fun fetchLatestUpdateManifestAsync(requestId: String) {
+            ioExecutor.execute {
+                var bestCode = -1
+                var bestName = ""
+                var bestUrl = ""
+
+                fun compareVer(a: String, b: String): Int {
+                    if (b.isBlank()) return if (a.isNotBlank()) 1 else 0
+                    val pa = a.removePrefix("v").removePrefix("V").split(".").map { it.toIntOrNull() ?: 0 }
+                    val pb = b.removePrefix("v").removePrefix("V").split(".").map { it.toIntOrNull() ?: 0 }
+                    val len = maxOf(pa.size, pb.size, 3)
+                    for (i in 0 until len) {
+                        val diff = (pa.getOrNull(i) ?: 0) - (pb.getOrNull(i) ?: 0)
+                        if (diff != 0) return diff
+                    }
+                    return 0
+                }
+
+                fun considerCandidate(code: Int, name: String, url: String) {
+                    if (name.isBlank() || code <= 0) return
+                    val better = bestCode < 0 || code > bestCode || (code == bestCode && compareVer(name, bestName) > 0)
+                    if (better) {
+                        bestCode = code
+                        bestName = name
+                        bestUrl = url
+                    }
+                }
+
+                fun fetchText(urlStr: String, acceptHeader: String? = null): String? {
+                    return try {
+                        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                            instanceFollowRedirects = true
+                            connectTimeout = 8000
+                            readTimeout = 8000
+                            requestMethod = "GET"
+                            setRequestProperty("Cache-Control", "no-cache")
+                            if (acceptHeader != null) setRequestProperty("Accept", acceptHeader)
+                        }
+                        if (conn.responseCode in 200..299) {
+                            conn.inputStream.bufferedReader().use { it.readText() }
+                        } else {
+                            null
+                        }
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+
+                val ts = System.currentTimeMillis()
+                val manifestCandidates = listOf(
+                    "$REMOTE_MANIFEST_URL?t=$ts",
+                    "https://raw.githubusercontent.com/Abujar287/ag_file_manager/main/version.json?t=$ts"
+                )
+                for (u in manifestCandidates) {
+                    val body = fetchText(u) ?: continue
+                    try {
+                        val json = JSONObject(body)
+                        val vCode = json.optInt("versionCode", -1)
+                        val vName = json.optString("versionName", "").trim()
+                        val apkUrl = json.optString("apkUrl", "").ifBlank {
+                            "https://github.com/Abujar287/ag_file_manager/releases/download/v$vName/AG_File_Manager_v$vName.apk"
+                        }
+                        considerCandidate(vCode, vName, apkUrl)
+                    } catch (_: Exception) {
+                    }
+                }
+
+                // Fallback: GitHub Releases API in case version.json wasn't attached or lags behind tag
+                val apiBody = fetchText(
+                    "https://api.github.com/repos/Abujar287/ag_file_manager/releases/latest",
+                    "application/vnd.github+json"
+                )
+                if (apiBody != null) {
+                    try {
+                        val rel = JSONObject(apiBody)
+                        val relVer = rel.optString("tag_name", "").trim().removePrefix("v").removePrefix("V")
+                        if (relVer.isNotBlank() && (bestName.isBlank() || compareVer(relVer, bestName) > 0)) {
+                            var apkUrl = "https://github.com/Abujar287/ag_file_manager/releases/download/v$relVer/AG_File_Manager_v$relVer.apk"
+                            val assets = rel.optJSONArray("assets")
+                            if (assets != null) {
+                                for (i in 0 until assets.length()) {
+                                    val asset = assets.optJSONObject(i) ?: continue
+                                    val aName = asset.optString("name", "")
+                                    if (aName.endsWith(".apk", ignoreCase = true)) {
+                                        apkUrl = asset.optString("browser_download_url", apkUrl)
+                                        break
+                                    }
+                                }
+                            }
+                            val syntheticCode = maxOf(BuildConfig.VERSION_CODE + 1, if (bestCode > 0) bestCode + 1 else 1)
+                            considerCandidate(syntheticCode, relVer, apkUrl)
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+
+                val payload = JSONObject().apply {
+                    put("requestId", requestId)
+                    if (bestCode > 0 && bestName.isNotBlank()) {
+                        put("manifest", JSONObject().apply {
+                            put("versionCode", bestCode)
+                            put("versionName", bestName)
+                            put("apkUrl", bestUrl)
+                        })
+                    }
+                }
+                dispatchWebEvent("android_update_manifest_result", payload)
             }
         }
 
