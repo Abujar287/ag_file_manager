@@ -101,6 +101,8 @@ function main() {
 export const APP_VERSION_NAME = '${nextName}';
 export const GITHUB_REPO = '${REPO}';
 export const REMOTE_VERSION_JSON_URL = \`https://raw.githubusercontent.com/\${GITHUB_REPO}/main/version.json\`;
+export const GITHUB_LATEST_RELEASE_VERSION_URL = \`https://github.com/\${GITHUB_REPO}/releases/latest/download/version.json\`;
+export const GITHUB_LATEST_RELEASE_API = \`https://api.github.com/repos/\${GITHUB_REPO}/releases/latest\`;
 export const REMOTE_DOWNLOADS_BASE_URL = \`https://raw.githubusercontent.com/\${GITHUB_REPO}/main/public/downloads\`;
 export const GITHUB_RELEASE_DOWNLOAD_BASE = \`https://github.com/\${GITHUB_REPO}/releases/download\`;
 `;

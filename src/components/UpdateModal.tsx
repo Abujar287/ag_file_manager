@@ -8,6 +8,8 @@ import {
   triggerSystemDownload,
 } from '../services/deviceStorageService';
 import {
+  GITHUB_LATEST_RELEASE_API,
+  GITHUB_LATEST_RELEASE_VERSION_URL,
   GITHUB_RELEASE_DOWNLOAD_BASE,
   GITHUB_REPO,
   REMOTE_DOWNLOADS_BASE_URL,
@@ -90,36 +92,95 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
     let mounted = true;
     const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:';
 
+    const compareVersionNames = (a: string, b: string): number => {
+      const pa = a.replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
+      const pb = b.replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
+      const len = Math.max(pa.length, pb.length, 3);
+      for (let i = 0; i < len; i++) {
+        const diff = (pa[i] || 0) - (pb[i] || 0);
+        if (diff !== 0) return diff;
+      }
+      return 0;
+    };
+
     const fetchManifest = async (): Promise<RemoteVersionManifest | null> => {
       const cacheBust = `?t=${Date.now()}`;
       const githubRawMirror = `https://github.com/${GITHUB_REPO}/raw/main/version.json`;
       const urls =
         isFileProtocol || isRunningInAndroidApp()
-          ? [REMOTE_VERSION_JSON_URL + cacheBust, githubRawMirror + cacheBust]
+          ? [
+              GITHUB_LATEST_RELEASE_VERSION_URL + cacheBust,
+              REMOTE_VERSION_JSON_URL + cacheBust,
+              githubRawMirror + cacheBust,
+            ]
           : ['./version.json' + cacheBust, REMOTE_VERSION_JSON_URL + cacheBust];
 
       let best: RemoteVersionManifest | null = null;
+      const pickBest = (
+        current: RemoteVersionManifest | null,
+        candidate: RemoteVersionManifest
+      ): RemoteVersionManifest => {
+        if (
+          !current ||
+          candidate.versionCode > current.versionCode ||
+          (candidate.versionCode === current.versionCode &&
+            compareVersionNames(candidate.versionName, current.versionName) > 0)
+        ) {
+          return candidate;
+        }
+        return current;
+      };
+
       for (const url of urls) {
         try {
           const res = await fetch(url, { cache: 'no-store' });
           if (!res.ok) continue;
           const data = (await res.json()) as Partial<RemoteVersionManifest>;
           if (typeof data.versionCode === 'number' && typeof data.versionName === 'string') {
-            const candidate: RemoteVersionManifest = {
+            best = pickBest(best, {
               versionCode: data.versionCode,
               versionName: data.versionName,
               apkUrl:
                 data.apkUrl ||
                 `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${data.versionName}/AG_File_Manager_v${data.versionName}.apk`,
-            };
-            if (!best || candidate.versionCode > best.versionCode) {
-              best = candidate;
-            }
+            });
           }
         } catch {
           // try next endpoint
         }
       }
+
+      // Check GitHub Releases API (CORS-enabled) so releases are detected without committing version.json to main
+      try {
+        const relRes = await fetch(GITHUB_LATEST_RELEASE_API, {
+          cache: 'no-store',
+          headers: { Accept: 'application/vnd.github+json' },
+        });
+        if (relRes.ok) {
+          const rel = (await relRes.json()) as {
+            tag_name?: string;
+            assets?: Array<{ name?: string; browser_download_url?: string }>;
+          };
+          const relVersion = (rel.tag_name || '').replace(/^v/i, '').trim();
+          const apkAsset = rel.assets?.find((a) => a.name && /\.apk$/i.test(a.name));
+          if (relVersion && compareVersionNames(relVersion, effectiveCurrentName) > 0) {
+            const syntheticCode =
+              best && compareVersionNames(relVersion, best.versionName) <= 0
+                ? best.versionCode
+                : Math.max(effectiveCurrentCode + 1, best ? best.versionCode + 1 : effectiveCurrentCode + 1);
+            best = pickBest(best, {
+              versionCode: syntheticCode,
+              versionName: relVersion,
+              apkUrl:
+                apkAsset?.browser_download_url ||
+                `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${relVersion}/AG_File_Manager_v${relVersion}.apk`,
+            });
+          }
+        }
+      } catch {
+        // ignore network/rate-limit errors from GitHub API
+      }
+
       return best;
     };
 

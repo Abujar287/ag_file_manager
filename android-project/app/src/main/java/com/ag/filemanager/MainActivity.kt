@@ -67,7 +67,7 @@ class MainActivity : Activity() {
         private const val REQ_FILE_CHOOSER = 1005
         private const val REQ_UNINSTALL_APP = 1006
         private const val REMOTE_MANIFEST_URL =
-            "https://raw.githubusercontent.com/Abujar287/ag_file_manager/main/version.json"
+            "https://github.com/Abujar287/ag_file_manager/releases/latest/download/version.json"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

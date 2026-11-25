@@ -414,27 +414,43 @@ class UpdateManager(
     }
 
     private fun fetchUpdateManifest(): Result<UpdateInfo> {
-        return try {
-            val conn = (URL(manifestUrl).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8000
-                readTimeout = 8000
-                requestMethod = "GET"
+        val candidates = listOf(
+            manifestUrl,
+            "https://raw.githubusercontent.com/Abujar287/ag_file_manager/main/version.json"
+        ).distinct()
+
+        var lastError: Exception? = null
+        var best: UpdateInfo? = null
+
+        for (urlStr in candidates) {
+            try {
+                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                    instanceFollowRedirects = true
+                    connectTimeout = 8000
+                    readTimeout = 8000
+                    requestMethod = "GET"
+                }
+                if (conn.responseCode in 200..299) {
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(body)
+                    val info = UpdateInfo(
+                        versionCode = json.getInt("versionCode"),
+                        versionName = json.getString("versionName"),
+                        apkUrl = json.getString("apkUrl")
+                    )
+                    if (best == null || info.versionCode > best.versionCode) {
+                        best = info
+                    }
+                } else {
+                    lastError = IllegalStateException("Update server returned HTTP ${conn.responseCode}")
+                }
+            } catch (e: Exception) {
+                lastError = e
             }
-            if (conn.responseCode !in 200..299) {
-                return Result.failure(IllegalStateException("Update server returned HTTP ${conn.responseCode}"))
-            }
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(body)
-            Result.success(
-                UpdateInfo(
-                    versionCode = json.getInt("versionCode"),
-                    versionName = json.getString("versionName"),
-                    apkUrl = json.getString("apkUrl")
-                )
-            )
-        } catch (e: Exception) {
-            Result.failure(e)
         }
+
+        return best?.let { Result.success(it) }
+            ?: Result.failure(lastError ?: IllegalStateException("Unable to fetch update manifest"))
     }
 
     private fun mapDownloadFailure(reason: Int): String = when (reason) {
