@@ -13,6 +13,9 @@ on:
         description: "Semantic versionName (e.g. 1.2.1)"
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   build-release-apk:
     runs-on: ubuntu-latest
@@ -83,8 +86,45 @@ jobs:
           EOF
 
       - name: Upload signed APK & version.json
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            AG_File_Manager_v*.apk
-            version.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          V_NAME=$(node -e "console.log(require('./version.json').versionName)")
+          V_CODE=$(node -e "console.log(require('./version.json').versionCode)")
+          TAG_NAME="v${V_NAME}"
+          APK_NAME="AG_File_Manager_v${V_NAME}.apk"
+          TARGET_SHA="$(git rev-parse HEAD)"
+
+          attempt=1
+          max_attempts=5
+          sleep_secs=5
+
+          while [ "$attempt" -le "$max_attempts" ]; do
+            if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+              if gh release upload "$TAG_NAME" "$APK_NAME" version.json --clobber; then
+                exit 0
+              fi
+            else
+              if gh release create "$TAG_NAME" "$APK_NAME" version.json \
+                --target "$TARGET_SHA" \
+                --title "AG File Manager ${TAG_NAME}" \
+                --generate-notes || \
+                gh release create "$TAG_NAME" "$APK_NAME" version.json \
+                --target "$TARGET_SHA" \
+                --title "AG File Manager ${TAG_NAME}" \
+                --notes "Signed Android APK release ${TAG_NAME} (build ${V_CODE})."; then
+                exit 0
+              fi
+            fi
+
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              sleep "$sleep_secs"
+              sleep_secs=$((sleep_secs * 2))
+            fi
+            attempt=$((attempt + 1))
+          done
+
+          echo "ERROR: Failed to publish GitHub release ${TAG_NAME}"
+          exit 1
+
