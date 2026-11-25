@@ -1,323 +1,138 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-echo "=== Building Real Signed Android APK for AG File Manager ==="
+echo "=== Building Real Signed Android APK (Gradle / Android SDK) ==="
 
-BUILD_DIR="/tmp/android-apk-build"
-rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR/src/com/ag/filemanager"
-mkdir -p "$BUILD_DIR/res/values"
-mkdir -p "$BUILD_DIR/res/drawable"
-mkdir -p "$BUILD_DIR/assets"
-mkdir -p "$BUILD_DIR/obj"
+ROOT_DIR="$(pwd)"
 
-# 1. AndroidManifest.xml
-cat <<'EOF' > "$BUILD_DIR/AndroidManifest.xml"
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.ag.filemanager"
-    android:versionCode="3"
-    android:versionName="1.2.0">
+# Read versionCode & versionName dynamically from version.json
+V_CODE=$(node -e "const v=require('./version.json'); console.log(v.versionCode || 3)")
+V_NAME=$(node -e "const v=require('./version.json'); console.log(v.versionName || '1.2.0')")
+APK_NAME="AG_File_Manager_v${V_NAME}.apk"
 
-    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="35" />
+echo "Target Version: v${V_NAME} (versionCode=${V_CODE})"
 
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-
-    <application
-        android:label="@string/app_name"
-        android:icon="@drawable/ic_launcher"
-        android:allowBackup="true"
-        android:hardwareAccelerated="true"
-        android:requestLegacyExternalStorage="true"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
-        
-        <activity
-            android:name="com.ag.filemanager.MainActivity"
-            android:exported="true"
-            android:label="@string/launcher_name"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
-</manifest>
-EOF
-
-# 2. strings.xml
-cat <<'EOF' > "$BUILD_DIR/res/values/strings.xml"
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="launcher_name">File Manager</string>
-    <string name="app_name">AG File Manager</string>
-</resources>
-EOF
-
-# 3. Create app icon (drawable XML / vector)
-cat <<'EOF' > "$BUILD_DIR/res/drawable/ic_launcher.xml"
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-  <path
-      android:fillColor="#1D4ED8"
-      android:pathData="M14,14h80a14,14 0 0,1 14,14v52a14,14 0 0,1 -14,14h-80a14,14 0 0,1 -14,-14v-52a14,14 0 0,1 14,-14z"/>
-  <path
-      android:fillColor="#FBBF24"
-      android:pathData="M26,36h20l8,7h28a4,4 0 0,1 4,4v28a4,4 0 0,1 -4,4h-56a4,4 0 0,1 -4,-4v-35a4,4 0 0,1 4,-4z"/>
-  <path
-      android:fillColor="#FFFFFF"
-      android:pathData="M34,42h40v26h-40z"/>
-  <path
-      android:fillColor="#F59E0B"
-      android:pathData="M24,50h60a2,2 0 0,1 2,2l-4,25a4,4 0 0,1 -4,3h-50a4,4 0 0,1 -4,-3l-4,-25a2,2 0 0,1 2,-2z"/>
-</vector>
-EOF
-
-# 4. Generate R.java and compiled resources
-echo "[1/7] Compiling resources with aapt..."
-aapt package -f -m \
-  -J "$BUILD_DIR/src" \
-  -M "$BUILD_DIR/AndroidManifest.xml" \
-  -S "$BUILD_DIR/res" \
-  -I /opt/android-tools/android.jar
-
-# 5. MainActivity.java
-cat <<'EOF' > "$BUILD_DIR/src/com/ag/filemanager/MainActivity.java"
-package com.ag.filemanager;
-
-import android.app.Activity;
-import android.os.Bundle;
-import android.webkit.WebSettings;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
-import android.webkit.WebChromeClient;
-import android.webkit.ValueCallback;
-import android.webkit.JavascriptInterface;
-import android.net.Uri;
-import android.content.Intent;
-import android.view.Window;
-import android.os.Environment;
-import android.os.StatFs;
-import android.app.DownloadManager;
-import android.content.Context;
-import java.io.File;
-
-public class MainActivity extends Activity {
-    private WebView webView;
-    private ValueCallback<Uri[]> uploadMessage;
-    private final static int FILECHOOSER_RESULTCODE = 101;
-
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        requestWindowFeature(Window.FEATURE_NO_TITLE);
-
-        webView = new WebView(this);
-        setContentView(webView);
-
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(true);
-        settings.setAllowFileAccessFromFileURLs(true);
-        settings.setAllowUniversalAccessFromFileURLs(true);
-        settings.setDatabaseEnabled(true);
-        settings.setUseWideViewPort(true);
-        settings.setLoadWithOverviewMode(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-
-        webView.setWebViewClient(new WebViewClient());
-        webView.setWebChromeClient(new WebChromeClient() {
-            @Override
-            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
-                                              FileChooserParams fileChooserParams) {
-                if (uploadMessage != null) {
-                    uploadMessage.onReceiveValue(null);
-                    uploadMessage = null;
-                }
-                uploadMessage = filePathCallback;
-                Intent intent = fileChooserParams.createIntent();
-                try {
-                    startActivityForResult(intent, FILECHOOSER_RESULTCODE);
-                } catch (Exception e) {
-                    uploadMessage = null;
-                    return false;
-                }
-                return true;
-            }
-        });
-
-        webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
-        webView.addJavascriptInterface(new AndroidBridge(), "AndroidInterface");
-
-        webView.loadUrl("file:///android_asset/dist/index.html");
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == FILECHOOSER_RESULTCODE) {
-            if (uploadMessage == null) return;
-            uploadMessage.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
-            uploadMessage = null;
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
-        }
-    }
-
-    @Override
-    public void onBackPressed() {
-        if (webView != null) {
-            webView.evaluateJavascript("if (typeof window.handleSystemBackButton === 'function') { window.handleSystemBackButton(); } else { window.history.back(); }", null);
-        } else {
-            super.onBackPressed();
-        }
-    }
-
-    public class AndroidBridge {
-        @JavascriptInterface
-        public boolean isPermissionGranted() {
-            return true;
-        }
-
-        @JavascriptInterface
-        public void requestStoragePermissions() {
-            // Invokes native permission request
-        }
-
-        @JavascriptInterface
-        public String getDeviceStorageStats() {
-            try {
-                File root = Environment.getExternalStorageDirectory();
-                StatFs stat = new StatFs(root.getPath());
-                long total = stat.getTotalBytes();
-                long free = stat.getAvailableBytes();
-                long used = Math.max(0, total - free);
-                int pct = total > 0 ? (int)((used * 100) / total) : 0;
-                return "{\"internal\":{\"totalBytes\":" + total + ",\"usedBytes\":" + used + ",\"freeBytes\":" + free + ",\"usedPercent\":" + pct + "},\"external\":{\"isMounted\":false,\"totalBytes\":0,\"usedBytes\":0,\"freeBytes\":0,\"usedPercent\":0}}";
-            } catch (Exception e) {
-                return "{}";
-            }
-        }
-
-        @JavascriptInterface
-        public String listDirectory(String path) {
-            return "[]";
-        }
-
-        @JavascriptInterface
-        public void downloadWithDownloadManager(String url, String fileName, String title) {
-            try {
-                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-                DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
-                req.setTitle(title);
-                req.setDescription("Downloading file");
-                req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
-                dm.enqueue(req);
-            } catch (Exception e) {
-                Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                startActivity(i);
-            }
-        }
-
-        @JavascriptInterface
-        public void exitApp() {
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    finishAffinity();
-                }
-            });
-        }
-    }
-}
-EOF
-
-# 6. Compile Java classes
-echo "[2/7] Compiling Java source with javac..."
-javac -encoding UTF-8 \
-  -cp /opt/android-tools/android.jar \
-  -d "$BUILD_DIR/obj" \
-  "$BUILD_DIR/src/com/ag/filemanager"/*.java
-
-# 7. Compile classes to classes.dex with D8
-echo "[3/7] Compiling bytecode to classes.dex with D8..."
-java -cp /opt/android-tools/d8.jar com.android.tools.r8.D8 \
-  --lib /opt/android-tools/android.jar \
-  --release \
-  --output "$BUILD_DIR" \
-  "$BUILD_DIR/obj/com/ag/filemanager"/*.class
-
-# 8. Copy web bundle into assets
-echo "[4/7] Packaging assets..."
-mkdir -p "$BUILD_DIR/assets/dist"
-cp -r dist/* "$BUILD_DIR/assets/dist/"
-
-# 9. Package base APK
-echo "[5/7] Creating unaligned APK with aapt..."
-aapt package -f \
-  -M "$BUILD_DIR/AndroidManifest.xml" \
-  -S "$BUILD_DIR/res" \
-  -A "$BUILD_DIR/assets" \
-  -I /opt/android-tools/android.jar \
-  -F "$BUILD_DIR/app-unaligned.apk"
-
-# Add classes.dex into APK
-cd "$BUILD_DIR"
-aapt add app-unaligned.apk classes.dex
-cd - > /dev/null
-
-# 10. Align APK with zipalign
-echo "[6/7] Aligning APK with zipalign..."
-zipalign -f -p 4 "$BUILD_DIR/app-unaligned.apk" "$BUILD_DIR/app-aligned.apk"
-
-# 11. Create or use keystore and sign with apksigner
-echo "[7/7] Signing APK with apksigner..."
-KEYSTORE="/opt/android-tools/release.keystore"
-if [ ! -f "$KEYSTORE" ]; then
-  keytool -genkeypair -v \
-    -keystore "$KEYSTORE" \
-    -alias ag_key \
-    -keyalg RSA \
-    -keysize 2048 \
-    -validity 10000 \
-    -storepass "agpassword123" \
-    -keypass "agpassword123" \
-    -dname "CN=Abujar Al-Gifari, OU=AG File Manager, O=AG Software, C=BD"
+# Locate JAVA_HOME
+if [ -z "${JAVA_HOME:-}" ] && [ -d "/usr/lib/jvm/java-17-openjdk-amd64" ]; then
+  export JAVA_HOME="/usr/lib/jvm/java-17-openjdk-amd64"
+fi
+if [ -n "${JAVA_HOME:-}" ]; then
+  export PATH="$JAVA_HOME/bin:$PATH"
 fi
 
-FINAL_APK="/tmp/AG_File_Manager_v1.2.0.apk"
-apksigner sign \
-  --ks "$KEYSTORE" \
-  --ks-pass pass:agpassword123 \
-  --key-pass pass:agpassword123 \
-  --out "$FINAL_APK" \
-  "$BUILD_DIR/app-aligned.apk"
+# Locate ANDROID_HOME / ANDROID_SDK_ROOT
+if [ -z "${ANDROID_HOME:-}" ]; then
+  if [ -n "${ANDROID_SDK_ROOT:-}" ]; then
+    export ANDROID_HOME="$ANDROID_SDK_ROOT"
+  elif [ -d "/tmp/android-sdk" ]; then
+    export ANDROID_HOME="/tmp/android-sdk"
+  elif [ -d "$HOME/Android/Sdk" ]; then
+    export ANDROID_HOME="$HOME/Android/Sdk"
+  fi
+fi
+export ANDROID_SDK_ROOT="${ANDROID_HOME:-}"
 
-echo "Verifying signature..."
-apksigner verify --verbose "$FINAL_APK"
+if [ -z "${ANDROID_HOME:-}" ] || [ ! -d "${ANDROID_HOME}/platforms" ]; then
+  echo "ERROR: Android SDK not found. Set ANDROID_HOME or install Android SDK in /tmp/android-sdk."
+  exit 1
+fi
 
-# Distribute final APK to all standard locations
-cp "$FINAL_APK" public/downloads/AG_File_Manager_v1.2.0.apk
-cp "$FINAL_APK" dist/downloads/AG_File_Manager_v1.2.0.apk
-cp "$FINAL_APK" apk/AG_File_Manager_v1.2.0.apk
-cp "$FINAL_APK" AG_File_Manager_v1.2.0.apk
-mkdir -p android-project/app/release
-cp "$FINAL_APK" android-project/app/release/app-release.apk
+# Locate Gradle
+GRADLE_BIN=""
+if [ -x "$ROOT_DIR/android-project/gradlew" ]; then
+  GRADLE_BIN="$ROOT_DIR/android-project/gradlew"
+elif command -v gradle >/dev/null 2>&1; then
+  GRADLE_BIN="$(command -v gradle)"
+elif [ -x "/tmp/gradle-dist/gradle-8.10.2/bin/gradle" ]; then
+  GRADLE_BIN="/tmp/gradle-dist/gradle-8.10.2/bin/gradle"
+fi
 
-APK_SIZE=$(stat -c%s "$FINAL_APK" 2>/dev/null || stat -f%z "$FINAL_APK" 2>/dev/null)
-echo "=== SUCCESS! Real Android APK created successfully ==="
-echo "Path: public/downloads/AG_File_Manager_v1.2.0.apk"
-echo "Size: $APK_SIZE bytes"
+if [ -z "$GRADLE_BIN" ]; then
+  echo "ERROR: Gradle not found."
+  exit 1
+fi
+
+# 1. Build web frontend if dist/ doesn't exist
+if [ ! -f "$ROOT_DIR/dist/index.html" ]; then
+  echo "[1/4] Building web assets..."
+  npm run build
+fi
+
+# 2. Copy web bundle into Android assets/dist (excluding any *.apk files)
+echo "[2/4] Syncing web assets into android-project/app/src/main/assets/dist..."
+ASSETS_DIST="$ROOT_DIR/android-project/app/src/main/assets/dist"
+rm -rf "$ASSETS_DIST"
+mkdir -p "$ASSETS_DIST"
+node -e '
+const fs = require("fs");
+const path = require("path");
+function copyFiltered(src, dest) {
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (entry.name.endsWith(".apk")) continue;
+    const s = path.join(src, entry.name);
+    const d = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      fs.mkdirSync(d, { recursive: true });
+      copyFiltered(s, d);
+    } else {
+      fs.copyFileSync(s, d);
+    }
+  }
+}
+copyFiltered(process.argv[1], process.argv[2]);
+' "$ROOT_DIR/dist" "$ASSETS_DIST"
+
+# 3. Compile signed Release APK with Gradle
+echo "[3/4] Compiling Release APK with Gradle..."
+pushd "$ROOT_DIR/android-project" >/dev/null
+printf "sdk.dir=%s\n" "$ANDROID_HOME" > local.properties
+"$GRADLE_BIN" assembleRelease \
+  -PVERSION_CODE="$V_CODE" \
+  -PVERSION_NAME="$V_NAME" \
+  --no-daemon
+popd >/dev/null
+
+BUILT_APK=""
+for candidate in \
+  "$ROOT_DIR/android-project/app/build/outputs/apk/release/app-release.apk" \
+  "$ROOT_DIR/android-project/app/build/outputs/apk/release/app-release-signed.apk"; do
+  if [ -f "$candidate" ]; then
+    BUILT_APK="$candidate"
+    break
+  fi
+done
+
+if [ -z "$BUILT_APK" ]; then
+  echo "ERROR: Gradle build did not produce app-release.apk!"
+  exit 1
+fi
+
+# 4. Verify APK signature & binary manifest integrity
+echo "[4/4] Verifying APK signature and binary package integrity..."
+APKSIGNER_BIN=$(command -v apksigner || find "$ANDROID_HOME/build-tools" -name apksigner | head -n 1 || true)
+if [ -n "$APKSIGNER_BIN" ]; then
+  "$APKSIGNER_BIN" verify --verbose "$BUILT_APK"
+fi
+
+AAPT_BIN=$(command -v aapt || find "$ANDROID_HOME/build-tools" -name aapt | head -n 1 || true)
+if [ -n "$AAPT_BIN" ]; then
+  "$AAPT_BIN" dump badging "$BUILT_APK" | head -n 10
+fi
+
+# Clean older versioned APKs and copy final signed APK to standard locations
+mkdir -p "$ROOT_DIR/public/downloads" "$ROOT_DIR/dist/downloads" "$ROOT_DIR/apk" "$ROOT_DIR/android-project/app/release"
+find "$ROOT_DIR" -maxdepth 1 -name "AG_File_Manager_v*.apk" ! -name "$APK_NAME" -delete
+find "$ROOT_DIR/public/downloads" -maxdepth 1 -name "AG_File_Manager_v*.apk" ! -name "$APK_NAME" -delete
+find "$ROOT_DIR/apk" -maxdepth 1 -name "AG_File_Manager_v*.apk" ! -name "$APK_NAME" -delete
+
+cp -f "$BUILT_APK" "$ROOT_DIR/public/downloads/$APK_NAME"
+cp -f "$BUILT_APK" "$ROOT_DIR/dist/downloads/$APK_NAME"
+cp -f "$BUILT_APK" "$ROOT_DIR/apk/$APK_NAME"
+cp -f "$BUILT_APK" "$ROOT_DIR/$APK_NAME"
+cp -f "$BUILT_APK" "$ROOT_DIR/android-project/app/release/app-release.apk"
+
+APK_SIZE=$(stat -c%s "$BUILT_APK" 2>/dev/null || stat -f%z "$BUILT_APK" 2>/dev/null)
+echo "=== SUCCESS! Genuine Signed Android APK Ready ==="
+echo "Version: v${V_NAME} (Build ${V_CODE})"
+echo "Path: public/downloads/${APK_NAME}"
+echo "Size: ${APK_SIZE} bytes"

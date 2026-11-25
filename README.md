@@ -1,6 +1,6 @@
 # AG File Manager 📁⚡
 
-A minimal, lightweight, and ultra-fast Android & Web File Manager with storage analysis, multi-tab window browsing, batch rename, and automated APK updates.
+A minimal, lightweight, and ultra-fast Android & Web File Manager with real device storage access, storage analysis, batch rename, multi-tab browsing, and automated GitHub-backed APK updates.
 
 ---
 
@@ -12,22 +12,22 @@ The latest signed Android APK is included directly in this repository:
 - **[⬇️ Web Download Path](./public/downloads/AG_File_Manager_v1.2.0.apk)**
 - **[⬇️ Root Package](./AG_File_Manager_v1.2.0.apk)**
 
-> *Also automatically uploaded as a build artifact in GitHub Actions on every run.*
+> *Automatically version-bumped, built via Gradle/Android SDK, signed, and published to GitHub Releases on every push to `main`.*
 
 ---
 
 ## ✨ Features
 
-- **MicroSD Storage Overview**: Authentic MicroSD card layout with circular storage usage gauges, horizontal groove line, and instant capacity readouts (Internal Storage & External SD Card with "No card found" fallback).
-- **Categories (4x2)**: Images, Videos, Audio, Apps (APKs), New Files, Compressed, Documents, and Recycle Bin with center-aligned counts.
+- **Real Device Storage & Permissions**: Uses native Android storage/media permissions and `StatFs` to display live device files, folders, categories, thumbnails, and used/free capacity (Internal Storage & External SD Card).
+- **Hardware Back Navigation + Exit Confirmation**: Pressing Back navigates upward or back to Home; pressing Back on Home prompts an Exit confirmation dialog before closing.
+- **Categories (4x2)**: Images, Videos, Audio, Apps (APKs), New Files, Compressed, Documents, and Recycle Bin with live counts.
 - **Deep Storage Analyzer**:
-  - File Analyzer & Large Files (>100MB)
-  - Duplicate file finder via SHA-256
+  - File Analyzer & Large Files
+  - Duplicate file finder
   - Empty folder cleaner & App Cache sweeper
-  - Recent files (last 7 days)
-- **Batch Rename Engine**: Prefix, suffix, find & replace, sequential numbering with instant preview.
-- **Multi-Tab Browsing**: Multi-window switcher with quick-close and history.
-- **In-App Updater**: Seamless update flow checking `version.json` and downloading releases to the device's public Download folder.
+  - Recent files
+- **Batch Rename Engine**: New Name + Number, Prefix + Original Name, and Extension Editor with live preview.
+- **In-App Updater + DownloadManager/IDM Support**: Checks `version.json` from GitHub, downloads updates via Android `DownloadManager` (or browser/IDM), and opens the Android PackageInstaller.
 
 ---
 
@@ -43,19 +43,13 @@ The latest signed Android APK is included directly in this repository:
 
 ### Web Application (Vite + React)
 ```bash
-# Install dependencies
 npm install
-
-# Run dev server
 npm run dev
-
-# Compile for production
 npm run build
 ```
 
 ### Android Native App (`android-project/`)
-The native Kotlin Android source code is located in the [`android-project/`](./android-project/) directory:
 ```bash
-cd android-project
-./gradlew assembleRelease
+npm run build
+npm run build:apk
 ```

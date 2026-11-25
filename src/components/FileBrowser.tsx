@@ -39,6 +39,7 @@ import {
   sortFileNodes,
 } from '../utils/formatters';
 import { FileIcon } from './FileIcon';
+import { DeviceStorageStats } from '../services/deviceStorageService';
 
 interface FileBrowserProps {
   mode: 'folder' | 'category' | 'search';
@@ -46,6 +47,7 @@ interface FileBrowserProps {
   category?: CategoryType;
   searchQuery?: string;
   files: FileNode[];
+  storageStats?: DeviceStorageStats | null;
   showHidden: boolean;
   showThumbnails: boolean;
   viewMode: ViewMode;
@@ -86,6 +88,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   category,
   searchQuery = '',
   files,
+  storageStats,
   showHidden,
   showThumbnails,
   viewMode,
@@ -202,11 +205,18 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
     }
   }
 
-  const totalBytes = isSdCard ? SD_TOTAL_BYTES : INTERNAL_TOTAL_BYTES;
-  const usedBytes = Math.min(
-    totalBytes,
-    (isSdCard ? 0 : INTERNAL_SYSTEM_RESERVED_BYTES) + volumeFilesBytes
-  );
+  const liveVolume = isSdCard ? storageStats?.external : storageStats?.internal;
+  const totalBytes = liveVolume?.totalBytes && liveVolume.totalBytes > 0
+    ? liveVolume.totalBytes
+    : isSdCard
+      ? SD_TOTAL_BYTES
+      : INTERNAL_TOTAL_BYTES;
+  const usedBytes = liveVolume?.totalBytes && liveVolume.totalBytes > 0
+    ? liveVolume.usedBytes
+    : Math.min(
+        totalBytes,
+        (isSdCard ? 0 : INTERNAL_SYSTEM_RESERVED_BYTES) + volumeFilesBytes
+      );
   const freePercent = Math.max(0, Math.round(((totalBytes - usedBytes) / totalBytes) * 100));
 
   // Build clean clickable path links: Internal Storage / DCIM / Camera

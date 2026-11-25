@@ -1,12 +1,15 @@
 // Device Storage and Native Android Bridge Service
 // Interfaces between the React UI and either the native Android Bridge or browser File APIs.
 
+import { APP_VERSION_CODE, APP_VERSION_NAME } from '../versionInfo';
+
 export interface DeviceStorageStats {
   internal: {
     totalBytes: number;
     usedBytes: number;
     freeBytes: number;
     usedPercent: number;
+    rootPath?: string;
   };
   external: {
     isMounted: boolean;
@@ -14,18 +17,42 @@ export interface DeviceStorageStats {
     usedBytes: number;
     freeBytes: number;
     usedPercent: number;
+    rootPath?: string;
   };
+}
+
+export interface NativeDownloadProgress {
+  status: 'pending' | 'running' | 'paused' | 'successful' | 'failed' | 'unknown';
+  downloadedBytes: number;
+  totalBytes: number;
+  localPath?: string;
+  reason?: string;
 }
 
 export interface AndroidBridgeInterface {
   isPermissionGranted?: () => boolean;
   requestStoragePermissions?: () => void;
+  getAppVersionCode?: () => number;
+  getAppVersionName?: () => string;
   getDeviceStorageStats?: () => string;
   listDirectory?: (path: string) => string;
-  downloadWithDownloadManager?: (url: string, fileName: string, title: string) => void;
+  scanAllCategories?: () => string;
+  createFolder?: (parentPath: string, name: string) => boolean;
+  createTextFile?: (parentPath: string, name: string, content: string) => boolean;
+  readTextFile?: (path: string) => string;
+  writeTextFile?: (path: string, content: string) => boolean;
+  renamePath?: (path: string, newName: string) => boolean;
+  deletePaths?: (pathsJson: string, moveToTrash: boolean) => boolean;
+  copyOrMovePaths?: (pathsJson: string, targetDirPath: string, move: boolean) => boolean;
+  downloadWithDownloadManager?: (url: string, fileName: string, title: string) => string;
+  getDownloadProgress?: (downloadId: string) => string;
+  canRequestPackageInstalls?: () => boolean;
+  requestInstallPermission?: () => void;
+  installApk?: (localPath: string) => boolean;
   exitApp?: () => void;
-  openFile?: (path: string, mimeType: string) => void;
+  openFile?: (path: string, mimeType: string) => boolean;
   shareFile?: (path: string) => void;
+  shareFiles?: (pathsJson: string) => void;
 }
 
 declare global {
@@ -45,6 +72,32 @@ export function isRunningInAndroidApp(): boolean {
   return getNativeBridge() !== null;
 }
 
+export function getRunningAppVersion(): { versionCode: number; versionName: string } {
+  const bridge = getNativeBridge();
+  if (bridge) {
+    try {
+      const code =
+        typeof bridge.getAppVersionCode === 'function'
+          ? bridge.getAppVersionCode()
+          : APP_VERSION_CODE;
+      const name =
+        typeof bridge.getAppVersionName === 'function'
+          ? bridge.getAppVersionName()
+          : APP_VERSION_NAME;
+      return {
+        versionCode: Number(code) || APP_VERSION_CODE,
+        versionName: name || APP_VERSION_NAME,
+      };
+    } catch {
+      // fall back to bundle version constants
+    }
+  }
+  return {
+    versionCode: APP_VERSION_CODE,
+    versionName: APP_VERSION_NAME,
+  };
+}
+
 /**
  * Checks if storage / media permissions are granted.
  */
@@ -60,8 +113,7 @@ export async function checkStoragePermissionGranted(): Promise<boolean> {
 
   // Web check: check if user previously granted folder access or stored files
   try {
-    const hasGranted = localStorage.getItem('ag_fm_permission_granted') === 'true';
-    return hasGranted;
+    return localStorage.getItem('ag_fm_permission_granted') === 'true';
   } catch {
     return false;
   }
@@ -75,13 +127,12 @@ export async function requestStoragePermission(): Promise<boolean> {
   if (bridge && typeof bridge.requestStoragePermissions === 'function') {
     try {
       bridge.requestStoragePermissions();
-      return true;
+      return Boolean(bridge.isPermissionGranted?.());
     } catch (e) {
       console.warn('Error invoking native requestStoragePermissions', e);
     }
   }
 
-  // Mark as requested for web
   try {
     localStorage.setItem('ag_fm_permission_granted', 'true');
   } catch {
@@ -112,6 +163,7 @@ export async function getLiveStorageStats(
               usedPercent: Math.round(
                 (parsed.internal.usedBytes / parsed.internal.totalBytes) * 100
               ),
+              rootPath: parsed.internal.rootPath || '/storage/emulated/0',
             },
             external: {
               isMounted: Boolean(parsed.external?.isMounted),
@@ -123,6 +175,7 @@ export async function getLiveStorageStats(
                     (parsed.external.usedBytes / parsed.external.totalBytes) * 100
                   )
                 : 0,
+              rootPath: parsed.external?.rootPath || undefined,
             },
           };
         }
@@ -133,14 +186,13 @@ export async function getLiveStorageStats(
   }
 
   // Web browser fallback: use real navigator.storage.estimate() if available
-  let deviceTotal = 128 * 1024 * 1024 * 1024; // standard base 128 GB
-  let deviceUsed = 48.2 * 1024 * 1024 * 1024; // typical OS + app footprint
+  let deviceTotal = 128 * 1024 * 1024 * 1024;
+  let deviceUsed = 48.2 * 1024 * 1024 * 1024;
 
   if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
     try {
       const estimate = await navigator.storage.estimate();
       if (estimate.quota && estimate.quota > 0) {
-        // Many mobile browsers report device storage quota (e.g. 50GB-256GB)
         deviceTotal = estimate.quota;
         if (estimate.usage) {
           deviceUsed = estimate.usage + fallbackFilesBytes;
@@ -161,6 +213,7 @@ export async function getLiveStorageStats(
       usedBytes: deviceUsed,
       freeBytes: free,
       usedPercent: pct,
+      rootPath: '/storage/emulated/0',
     },
     external: {
       isMounted: false,
@@ -172,42 +225,47 @@ export async function getLiveStorageStats(
   };
 }
 
+export function resolveDownloadUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (typeof window !== 'undefined' && window.location.protocol !== 'file:') {
+    const clean = url.startsWith('./') ? url.slice(1) : url;
+    return window.location.origin + (clean.startsWith('/') ? clean : '/' + clean);
+  }
+  return url;
+}
+
 /**
- * Downloads a file using Android's native system DownloadManager or web browser download.
+ * Downloads a file using Android's native system DownloadManager or web browser download (IDM-compatible).
  */
 export function triggerSystemDownload(
   url: string,
   fileName: string,
   title: string
-): void {
+): string | null {
+  const resolved = resolveDownloadUrl(url);
   const bridge = getNativeBridge();
   if (bridge && typeof bridge.downloadWithDownloadManager === 'function') {
     try {
-      bridge.downloadWithDownloadManager(url, fileName, title);
-      return;
+      const dlId = bridge.downloadWithDownloadManager(resolved, fileName, title);
+      return dlId || null;
     } catch (e) {
       console.warn('Native DownloadManager call failed, falling back to browser', e);
     }
   }
 
-  // Browser / IDM download trigger
+  // Browser / IDM download trigger (direct URL anchor allows IDM interception)
   try {
-    const fullUrl = window.location.origin + (url.startsWith('/') ? url : '/' + url);
     const a = document.createElement('a');
-    a.href = fullUrl;
+    a.href = resolved;
     a.download = fileName;
-    a.target = '_blank';
     a.rel = 'noopener noreferrer';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
   } catch (e) {
-    try {
-      window.open(url, '_blank');
-    } catch (err) {
-      console.error('Browser download trigger failed:', err);
-    }
+    console.error('Browser download trigger failed:', e);
   }
+  return null;
 }
 
 /**
@@ -224,7 +282,6 @@ export function exitApplication(): void {
     }
   }
 
-  // Browser exit handling
   try {
     window.close();
   } catch {

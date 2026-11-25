@@ -1,5 +1,11 @@
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+-keepattributes JavascriptInterface,Annotation
 
-# Keep update manifest JSON models if reflection is added
+# Preserve WebView JavascriptInterface bridge methods under R8 full shrinking
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class com.ag.filemanager.MainActivity$AndroidBridge { *; }
 -keepclassmembers class com.ag.filemanager.update.** { *; }
+-keep class androidx.core.content.FileProvider { *; }

@@ -132,6 +132,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
             <img
               src={folderMeta.previewThumbUrl}
               alt=""
+              loading="lazy"
               referrerPolicy="no-referrer"
               onError={() => setImgError(true)}
               className="w-full h-full object-cover"
@@ -158,6 +159,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
         <img
           src={node.thumbnailUrl}
           alt={node.name}
+          loading="lazy"
           referrerPolicy="no-referrer"
           onError={() => setImgError(true)}
           className="w-full h-full object-cover"

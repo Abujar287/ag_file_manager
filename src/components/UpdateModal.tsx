@@ -1,16 +1,34 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { UpdateScenario } from '../types/fileManager';
-import { triggerSystemDownload } from '../services/deviceStorageService';
+import {
+  getNativeBridge,
+  getRunningAppVersion,
+  isRunningInAndroidApp,
+  NativeDownloadProgress,
+  triggerSystemDownload,
+} from '../services/deviceStorageService';
+import {
+  GITHUB_RELEASE_DOWNLOAD_BASE,
+  REMOTE_DOWNLOADS_BASE_URL,
+  REMOTE_VERSION_JSON_URL,
+} from '../versionInfo';
 import { AppLogo } from './AppLogo';
 
 interface UpdateModalProps {
   open: boolean;
   currentVersion: string;
+  currentVersionCode?: number;
   newVersion: string;
   scenario: UpdateScenario;
   onClose: () => void;
   onSaveApkToPublicDownloads: (filename: string, sizeBytes: number) => void;
   onInstallCompleted: (newVersionName: string, newVersionCode: number) => void;
+}
+
+interface RemoteVersionManifest {
+  versionCode: number;
+  versionName: string;
+  apkUrl: string;
 }
 
 type ModalPhase =
@@ -24,13 +42,10 @@ type ModalPhase =
   | 'installed'
   | 'error';
 
-// Release APK footprint (~4.5 MB)
-const TOTAL_APK_MB = 4.5;
-const TOTAL_APK_BYTES = 4509779;
-
 export const UpdateModal: React.FC<UpdateModalProps> = ({
   open,
   currentVersion,
+  currentVersionCode,
   newVersion,
   scenario,
   onClose,
@@ -39,9 +54,16 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
 }) => {
   const [phase, setPhase] = useState<ModalPhase>('checking');
   const [downloadedMb, setDownloadedMb] = useState(0);
+  const [totalMb, setTotalMb] = useState(3.2);
   const [errorMessage, setErrorMessage] = useState('');
   const [installProgress, setInstallProgress] = useState(0);
+  const [remoteManifest, setRemoteManifest] = useState<RemoteVersionManifest | null>(null);
+  const [downloadedApkPath, setDownloadedApkPath] = useState<string>('');
   const timerRef = useRef<number | null>(null);
+
+  const runningVersion = getRunningAppVersion();
+  const effectiveCurrentCode = currentVersionCode ?? runningVersion.versionCode;
+  const effectiveCurrentName = currentVersion || runningVersion.versionName;
 
   const clearTimers = () => {
     if (timerRef.current !== null) {
@@ -57,106 +79,246 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
     }
 
     setDownloadedMb(0);
+    setTotalMb(3.2);
     setErrorMessage('');
     setInstallProgress(0);
+    setDownloadedApkPath('');
     setPhase('checking');
 
     let mounted = true;
-    const fetchLiveVersion = async () => {
-      try {
-        const res = await fetch('/version.json?' + Date.now());
-        if (!res.ok) throw new Error('Failed to check update server');
-        const data = await res.json();
-        if (!mounted) return;
+    const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:';
 
-        if (data.versionCode && data.versionCode > 2) {
-          setPhase('prompt');
-        } else if (currentVersion === newVersion) {
-          setPhase('up_to_date');
-        } else {
-          setPhase('prompt');
+    const fetchManifest = async (): Promise<RemoteVersionManifest | null> => {
+      const cacheBust = `?t=${Date.now()}`;
+      const urls =
+        isFileProtocol || isRunningInAndroidApp()
+          ? [REMOTE_VERSION_JSON_URL + cacheBust]
+          : ['./version.json' + cacheBust, REMOTE_VERSION_JSON_URL + cacheBust];
+
+      for (const url of urls) {
+        try {
+          const res = await fetch(url, { cache: 'no-store' });
+          if (!res.ok) continue;
+          const data = (await res.json()) as Partial<RemoteVersionManifest>;
+          if (typeof data.versionCode === 'number' && typeof data.versionName === 'string') {
+            return {
+              versionCode: data.versionCode,
+              versionName: data.versionName,
+              apkUrl:
+                data.apkUrl ||
+                `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${data.versionName}/AG_File_Manager_v${data.versionName}.apk`,
+            };
+          }
+        } catch {
+          // try next endpoint
         }
-      } catch (e) {
-        if (!mounted) return;
-        if (scenario === 'offline_error') {
-          setErrorMessage('No internet connection. Please check your network and try again.');
+      }
+      return null;
+    };
+
+    const runCheck = async () => {
+      if (scenario === 'offline_error' && !isRunningInAndroidApp()) {
+        setErrorMessage('No internet connection. Please check your network and try again.');
+        setPhase('error');
+        return;
+      }
+
+      const data = await fetchManifest();
+      if (!mounted) return;
+
+      if (!data) {
+        if (isRunningInAndroidApp()) {
+          setErrorMessage(
+            'Unable to reach GitHub update server. Please check your internet connection and try again.'
+          );
           setPhase('error');
-        } else if (scenario === 'up_to_date') {
-          setPhase('up_to_date');
-        } else {
-          setPhase('prompt');
+          return;
         }
+        // Web preview fallback
+        const fallbackManifest: RemoteVersionManifest = {
+          versionCode: effectiveCurrentCode,
+          versionName: newVersion || effectiveCurrentName,
+          apkUrl: `./downloads/AG_File_Manager_v${newVersion || effectiveCurrentName}.apk`,
+        };
+        setRemoteManifest(fallbackManifest);
+        setPhase(effectiveCurrentName === newVersion ? 'up_to_date' : 'prompt');
+        return;
+      }
+
+      setRemoteManifest(data);
+
+      if (data.versionCode > effectiveCurrentCode) {
+        setPhase('prompt');
+      } else {
+        setPhase('up_to_date');
       }
     };
 
-    const timer = window.setTimeout(fetchLiveVersion, 350);
+    const timer = window.setTimeout(runCheck, 250);
 
     return () => {
       mounted = false;
       window.clearTimeout(timer);
       clearTimers();
     };
-  }, [open, scenario, currentVersion, newVersion]);
+  }, [open, scenario, effectiveCurrentCode, effectiveCurrentName, newVersion]);
 
   if (!open) return null;
 
-  const targetFilename = `AG_File_Manager_v${newVersion}.apk`;
+  const targetVersionName = remoteManifest?.versionName || newVersion || effectiveCurrentName;
+  const targetVersionCode = remoteManifest?.versionCode || effectiveCurrentCode;
+  const targetFilename = `AG_File_Manager_v${targetVersionName}.apk`;
+
+  const getDownloadCandidates = (): string[] => {
+    const manifestUrl = remoteManifest?.apkUrl;
+    const githubReleaseUrl = `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${targetVersionName}/${targetFilename}`;
+    const githubRawUrl = `${REMOTE_DOWNLOADS_BASE_URL}/${targetFilename}`;
+    const localWebUrl = `./downloads/${targetFilename}`;
+
+    if (isRunningInAndroidApp() || window.location.protocol === 'file:') {
+      const list = [
+        manifestUrl && /^https?:\/\//i.test(manifestUrl) ? manifestUrl : githubReleaseUrl,
+        githubReleaseUrl,
+        githubRawUrl,
+      ];
+      return Array.from(new Set(list));
+    }
+
+    const list = [localWebUrl, manifestUrl || githubReleaseUrl, githubReleaseUrl, githubRawUrl];
+    return Array.from(new Set(list));
+  };
 
   const startDownload = async () => {
+    clearTimers();
     setErrorMessage('');
     setDownloadedMb(0);
     setPhase('downloading');
 
-    try {
-      const response = await fetch(`/downloads/${targetFilename}`);
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const contentLength = response.headers.get('content-length');
-      const total = contentLength ? parseInt(contentLength, 10) : 4509779;
+    const bridge = getNativeBridge();
+    const candidates = getDownloadCandidates();
+    const primaryUrl = candidates[0];
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        triggerSystemDownload(`/downloads/${targetFilename}`, targetFilename, `AG File Manager v${newVersion}`);
-        onSaveApkToPublicDownloads(targetFilename, total);
-        setPhase('installer_confirm');
+    // Path A: Native Android APK — use real DownloadManager + live progress polling
+    if (bridge && typeof bridge.downloadWithDownloadManager === 'function') {
+      const dlId = triggerSystemDownload(
+        primaryUrl,
+        targetFilename,
+        `AG File Manager v${targetVersionName}`
+      );
+
+      if (dlId && typeof bridge.getDownloadProgress === 'function') {
+        timerRef.current = window.setInterval(() => {
+          try {
+            const raw = bridge.getDownloadProgress!(dlId);
+            if (!raw) return;
+            const prog = JSON.parse(raw) as NativeDownloadProgress;
+            if (prog.totalBytes > 0) {
+              setTotalMb(Math.max(0.1, prog.totalBytes / (1024 * 1024)));
+            }
+            if (prog.downloadedBytes >= 0) {
+              setDownloadedMb(prog.downloadedBytes / (1024 * 1024));
+            }
+            if (prog.status === 'successful') {
+              clearTimers();
+              const resolvedPath =
+                prog.localPath || `/storage/emulated/0/Download/${targetFilename}`;
+              setDownloadedApkPath(resolvedPath);
+              onSaveApkToPublicDownloads(targetFilename, prog.totalBytes || 2_500_000);
+              if (
+                typeof bridge.canRequestPackageInstalls === 'function' &&
+                !bridge.canRequestPackageInstalls()
+              ) {
+                setPhase('permission_prompt');
+              } else {
+                setPhase('installer_confirm');
+              }
+            } else if (prog.status === 'failed') {
+              clearTimers();
+              setErrorMessage(
+                prog.reason ||
+                  'Download interrupted. You can also download via browser/IDM and tap Retry.'
+              );
+              setPhase('error');
+            }
+          } catch {
+            // keep polling until finished
+          }
+        }, 350);
         return;
       }
 
-      let receivedLength = 0;
-      const chunks: Uint8Array[] = [];
+      // Download started in background notification
+      onSaveApkToPublicDownloads(targetFilename, 2_500_000);
+      setPhase('installer_confirm');
+      return;
+    }
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        receivedLength += value.length;
-        setDownloadedMb(receivedLength / (1024 * 1024));
+    // Path B: Web / Mobile Browser — verify APK endpoint then trigger direct download (IDM-compatible)
+    try {
+      let chosenUrl = primaryUrl;
+      let contentSize = 0;
+
+      for (const candidate of candidates) {
+        try {
+          const headRes = await fetch(candidate, { method: 'HEAD' });
+          if (headRes.ok) {
+            const len = parseInt(headRes.headers.get('content-length') || '0', 10);
+            if (len === 0 || len > 50000) {
+              chosenUrl = candidate;
+              contentSize = len;
+              break;
+            }
+          }
+        } catch {
+          // CORS on cross-origin HEAD is normal; fall back to direct browser download
+          if (/^https?:\/\//i.test(candidate)) {
+            chosenUrl = candidate;
+            break;
+          }
+        }
       }
 
-      const blob = new Blob(chunks as BlobPart[], { type: 'application/vnd.android.package-archive' });
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = targetFilename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
-
-      onSaveApkToPublicDownloads(targetFilename, receivedLength || total);
-
-      if (scenario === 'permission_required') {
-        setPhase('permission_prompt');
-      } else {
-        setPhase('installer_confirm');
+      if (contentSize > 0) {
+        setTotalMb(contentSize / (1024 * 1024));
       }
-    } catch (e) {
-      triggerSystemDownload(`/downloads/${targetFilename}`, targetFilename, `AG File Manager v${newVersion}`);
-      onSaveApkToPublicDownloads(targetFilename, 4509779);
+
+      setDownloadedMb(totalMb);
+      // Direct URL download allows Internet Download Manager (IDM) or browser DownloadManager to intercept cleanly
+      triggerSystemDownload(chosenUrl, targetFilename, `AG File Manager v${targetVersionName}`);
+      onSaveApkToPublicDownloads(targetFilename, contentSize || 2_500_000);
+      setPhase('installer_confirm');
+    } catch {
+      triggerSystemDownload(primaryUrl, targetFilename, `AG File Manager v${targetVersionName}`);
+      onSaveApkToPublicDownloads(targetFilename, 2_500_000);
       setPhase('installer_confirm');
     }
   };
 
+  const handleOpenInBrowserOrIdm = () => {
+    const candidates = getDownloadCandidates();
+    const externalUrl =
+      candidates.find((u) => /^https?:\/\//i.test(u)) || candidates[0];
+    triggerSystemDownload(externalUrl, targetFilename, `AG File Manager v${targetVersionName}`);
+  };
+
   const handleConfirmInstall = () => {
+    const bridge = getNativeBridge();
+    if (bridge && typeof bridge.installApk === 'function') {
+      const pathToInstall =
+        downloadedApkPath || `/storage/emulated/0/Download/${targetFilename}`;
+      const launched = bridge.installApk(pathToInstall);
+      if (launched) {
+        onClose();
+        return;
+      }
+      setErrorMessage(
+        `Could not launch installer for ${targetFilename}. Open your Download folder and tap the APK file.`
+      );
+      setPhase('error');
+      return;
+    }
+
+    // Web preview simulation of installer completion
     setPhase('installing');
     setInstallProgress(20);
     clearTimers();
@@ -172,11 +334,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
   };
 
   const handleOpenUpdatedApp = () => {
-    onInstallCompleted(newVersion, 3);
+    onInstallCompleted(targetVersionName, targetVersionCode);
     onClose();
   };
 
-  const percent = Math.min(100, Math.round((downloadedMb / TOTAL_APK_MB) * 100));
+  const percent = totalMb > 0 ? Math.min(100, Math.round((downloadedMb / totalMb) * 100)) : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
@@ -196,10 +358,28 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
 
         {phase === 'up_to_date' && (
           <div className="p-6 space-y-5">
+            <div className="flex items-center gap-3">
+              <AppLogo size={36} />
+              <div>
+                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                  AG File Manager
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                  v{effectiveCurrentName} (Build {effectiveCurrentCode})
+                </p>
+              </div>
+            </div>
             <p className="text-sm text-slate-800 dark:text-slate-200">
               You are using the latest version.
             </p>
-            <div className="flex justify-end">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={handleOpenInBrowserOrIdm}
+                className="min-h-[40px] px-3 py-2 rounded-xl text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40"
+              >
+                Download APK
+              </button>
               <button
                 type="button"
                 onClick={onClose}
@@ -211,19 +391,21 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           </div>
         )}
 
-        {/* STRICT MINIMAL "Update Available Now" Dialog (prompt + live download progress) */}
         {(phase === 'prompt' || phase === 'downloading') && (
           <div className="p-6 space-y-5">
-            <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-              Update Available Now
-            </h2>
+            <div className="flex items-center gap-3">
+              <AppLogo size={36} />
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+                Update Available Now
+              </h2>
+            </div>
 
             <div className="space-y-1.5 text-sm">
               <div className="text-slate-600 dark:text-slate-400 tabular-nums">
-                Current Version: {currentVersion}
+                Current Version: {effectiveCurrentName} (Build {effectiveCurrentCode})
               </div>
               <div className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
-                New Version: {newVersion}
+                New Version: {targetVersionName} (Build {targetVersionCode})
               </div>
             </div>
 
@@ -231,12 +413,12 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               <div className="space-y-2 pt-1">
                 <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                   <div
-                    className="h-full bg-blue-600 transition-all duration-100"
+                    className="h-full bg-blue-600 transition-all duration-150"
                     style={{ width: `${percent}%` }}
                   />
                 </div>
                 <div className="text-xs font-mono text-slate-600 dark:text-slate-300 tabular-nums">
-                  {percent}% — {downloadedMb.toFixed(1)} MB / {TOTAL_APK_MB.toFixed(1)} MB
+                  {percent}% — {downloadedMb.toFixed(1)} MB / {totalMb.toFixed(1)} MB
                 </div>
               </div>
             )}
@@ -264,7 +446,6 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           </div>
         )}
 
-        {/* Install Unknown Apps Permission Request */}
         {phase === 'permission_prompt' && (
           <div className="p-6 space-y-4">
             <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
@@ -272,7 +453,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-400">
               Allow AG File Manager to install updates from{' '}
-              <span className="font-mono text-xs">/storage/emulated/0/Download/{targetFilename}</span>.
+              <span className="font-mono text-xs">Download/{targetFilename}</span>.
             </p>
             <div className="flex items-center justify-end gap-2.5 pt-2">
               <button
@@ -284,7 +465,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setPhase('installer_confirm')}
+                onClick={() => {
+                  const bridge = getNativeBridge();
+                  bridge?.requestInstallPermission?.();
+                  setPhase('installer_confirm');
+                }}
                 className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
               >
                 Allow & Continue
@@ -293,7 +478,6 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           </div>
         )}
 
-        {/* Standard Android Package Installer Update Prompt */}
         {phase === 'installer_confirm' && (
           <div className="p-6 space-y-5">
             <div className="flex items-center gap-3">
@@ -366,7 +550,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
                   AG File Manager
                 </h2>
                 <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
-                  App installed · v{newVersion}
+                  App installed · v{targetVersionName}
                 </p>
               </div>
             </div>
@@ -375,7 +559,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  onInstallCompleted(newVersion, 3);
+                  onInstallCompleted(targetVersionName, targetVersionCode);
                   onClose();
                 }}
                 className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
@@ -407,15 +591,13 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               >
                 Close
               </button>
-              {scenario !== 'offline_error' && (
-                <button
-                  type="button"
-                  onClick={startDownload}
-                  className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  Retry
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={startDownload}
+                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Retry
+              </button>
             </div>
           </div>
         )}

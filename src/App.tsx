@@ -32,11 +32,13 @@ import {
   exitApplication,
   getLiveStorageStats,
   getNativeBridge,
+  getRunningAppVersion,
   isRunningInAndroidApp,
   requestStoragePermission,
 } from './services/deviceStorageService';
+import { APP_VERSION_NAME } from './versionInfo';
 
-const LATEST_VERSION_NAME = '1.2.0';
+const LATEST_VERSION_NAME = APP_VERSION_NAME;
 
 function getScreenTitle(screen: ActiveScreen, files: FileNode[]): string {
   switch (screen.type) {
@@ -80,6 +82,8 @@ function getScreenTitle(screen: ActiveScreen, files: FileNode[]): string {
 const FILES_STORAGE_KEY = 'ag_fm_files_v2';
 const SETTINGS_STORAGE_KEY = 'ag_fm_settings_v2';
 
+const runningVersion = getRunningAppVersion();
+
 const DEFAULT_SETTINGS: AppSettings = {
   showHiddenFiles: false,
   showThumbnails: true,
@@ -89,12 +93,40 @@ const DEFAULT_SETTINGS: AppSettings = {
   sortOrder: 'asc',
   sdCardMounted: true,
   updateScenario: 'available',
-  currentVersionCode: 2,
-  currentVersionName: '1.1.0',
+  currentVersionCode: runningVersion.versionCode,
+  currentVersionName: runningVersion.versionName,
 };
+
+function createNativeRootNodes(internalPath = '/storage/emulated/0', sdPath?: string): FileNode[] {
+  const now = Date.now();
+  const roots: FileNode[] = [
+    {
+      id: 'internal_root',
+      name: 'Internal',
+      parentId: null,
+      kind: 'folder',
+      size: 0,
+      modifiedAt: now,
+      realPath: internalPath,
+    },
+    {
+      id: 'sd_root',
+      name: 'External',
+      parentId: null,
+      kind: 'folder',
+      size: 0,
+      modifiedAt: now,
+      realPath: sdPath || '/storage/sdcard1',
+    },
+  ];
+  return roots;
+}
 
 export default function App() {
   const [files, setFiles] = useState<FileNode[]>(() => {
+    if (isRunningInAndroidApp()) {
+      return createNativeRootNodes();
+    }
     try {
       const raw = localStorage.getItem(FILES_STORAGE_KEY);
       if (raw) {
@@ -116,15 +148,26 @@ export default function App() {
   });
 
   const [settings, setSettings] = useState<AppSettings>(() => {
+    const liveVer = getRunningAppVersion();
     try {
       const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
       if (raw) {
-        return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<AppSettings>) };
+        const parsed = JSON.parse(raw) as Partial<AppSettings>;
+        return {
+          ...DEFAULT_SETTINGS,
+          ...parsed,
+          currentVersionCode: liveVer.versionCode,
+          currentVersionName: liveVer.versionName,
+        };
       }
     } catch {
       // ignore storage read errors
     }
-    return DEFAULT_SETTINGS;
+    return {
+      ...DEFAULT_SETTINGS,
+      currentVersionCode: liveVer.versionCode,
+      currentVersionName: liveVer.versionName,
+    };
   });
 
   const fileUploadInputRef = useRef<HTMLInputElement>(null);
@@ -137,10 +180,14 @@ export default function App() {
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [historyPaths, setHistoryPaths] = useState<{ id: string; label: string; path: string }[]>([
-    { id: 'dir_download', label: 'Download', path: '/storage/emulated/0/Download' },
-    { id: 'dir_documents', label: 'Documents', path: '/storage/emulated/0/Documents' },
-  ]);
+  const [historyPaths, setHistoryPaths] = useState<{ id: string; label: string; path: string }[]>(() =>
+    isRunningInAndroidApp()
+      ? [{ id: 'internal_root', label: 'Internal', path: '/storage/emulated/0' }]
+      : [
+          { id: 'dir_download', label: 'Download', path: '/storage/emulated/0/Download' },
+          { id: 'dir_documents', label: 'Documents', path: '/storage/emulated/0/Documents' },
+        ]
+  );
 
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
   const [newItemType, setNewItemType] = useState<'folder' | 'text' | 'file' | null>(null);
@@ -162,6 +209,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (isRunningInAndroidApp()) return;
     try {
       localStorage.setItem(FILES_STORAGE_KEY, JSON.stringify(files));
     } catch {
@@ -219,45 +267,116 @@ export default function App() {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const activeScreen = activeTab.screen;
 
-  // Initialize live device storage stats & check permissions
-  useEffect(() => {
-    let mounted = true;
-    const initStorage = async () => {
-      const granted = await checkStoragePermissionGranted();
-      if (!mounted) return;
-      setHasStoragePermission(granted);
-
-      const totalFilesBytes = files.reduce(
-        (acc, f) => acc + (f.kind === 'folder' ? 0 : f.size),
-        0
-      );
-      const stats = await getLiveStorageStats(totalFilesBytes);
-      if (!mounted) return;
-      setStorageStats(stats);
-
-      const bridge = getNativeBridge();
-      if (bridge && typeof bridge.listDirectory === 'function') {
-        try {
-          const jsonStr = bridge.listDirectory('/storage/emulated/0');
-          if (jsonStr) {
-            const parsed = JSON.parse(jsonStr);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setFiles((prev) => {
-                const roots = prev.filter(
-                  (n) => n.id === 'internal_root' || n.id === 'sd_root'
-                );
-                return [...roots, ...parsed];
-              });
-            }
+  const mergeNativeNodes = (parentId: string | null, incoming: FileNode[], replaceSameParent = false) => {
+    setFiles((prev) => {
+      const byId = new Map(prev.map((n) => [n.id, n]));
+      if (replaceSameParent && parentId) {
+        for (const [id, node] of byId.entries()) {
+          if (node.parentId === parentId && id !== 'internal_root' && id !== 'sd_root') {
+            byId.delete(id);
           }
-        } catch (e) {
-          console.warn('Native directory reading failed:', e);
         }
       }
+      for (const item of incoming) {
+        byId.set(item.id, item);
+      }
+      return Array.from(byId.values());
+    });
+  };
+
+  const loadNativeFolder = (folderId: string, explicitPath?: string) => {
+    const bridge = getNativeBridge();
+    if (!bridge || typeof bridge.listDirectory !== 'function') return;
+
+    const targetNode = files.find((n) => n.id === folderId);
+    const targetPath =
+      explicitPath ||
+      targetNode?.realPath ||
+      (folderId === 'internal_root'
+        ? storageStats?.internal?.rootPath || '/storage/emulated/0'
+        : folderId === 'sd_root'
+          ? storageStats?.external?.rootPath || ''
+          : getNodePath(folderId, files));
+
+    if (!targetPath) return;
+
+    try {
+      const jsonStr = bridge.listDirectory(targetPath);
+      if (jsonStr) {
+        const parsed = JSON.parse(jsonStr) as FileNode[];
+        if (Array.isArray(parsed)) {
+          const normalized = parsed.map((item) => ({
+            ...item,
+            parentId: folderId,
+          }));
+          mergeNativeNodes(folderId, normalized, true);
+        }
+      }
+    } catch (e) {
+      console.warn('Native directory reading failed:', e);
+    }
+  };
+
+  const refreshNativeDeviceState = async () => {
+    const granted = await checkStoragePermissionGranted();
+    setHasStoragePermission(granted);
+
+    const totalFilesBytes = files.reduce(
+      (acc, f) => acc + (f.kind === 'folder' ? 0 : f.size),
+      0
+    );
+    const stats = await getLiveStorageStats(totalFilesBytes);
+    setStorageStats(stats);
+
+    if (isRunningInAndroidApp()) {
+      setSettings((prev) => ({
+        ...prev,
+        sdCardMounted: Boolean(stats.external?.isMounted),
+      }));
+    }
+
+    const bridge = getNativeBridge();
+    if (!bridge) return;
+
+    // Ensure root nodes reflect true device paths
+    const internalRootPath = stats.internal?.rootPath || '/storage/emulated/0';
+    const sdRootPath = stats.external?.isMounted ? stats.external.rootPath : undefined;
+    mergeNativeNodes(null, createNativeRootNodes(internalRootPath, sdRootPath), false);
+
+    if (typeof bridge.listDirectory === 'function') {
+      loadNativeFolder('internal_root', internalRootPath);
+      if (sdRootPath) {
+        loadNativeFolder('sd_root', sdRootPath);
+      }
+    }
+
+    if (granted && typeof bridge.scanAllCategories === 'function') {
+      window.setTimeout(() => {
+        try {
+          const raw = bridge.scanAllCategories!();
+          if (raw) {
+            const scanned = JSON.parse(raw) as FileNode[];
+            if (Array.isArray(scanned) && scanned.length > 0) {
+              mergeNativeNodes(null, scanned, false);
+            }
+          }
+        } catch (err) {
+          console.warn('Category scan skipped:', err);
+        }
+      }, 60);
+    }
+  };
+
+  // Initialize live device storage stats & check permissions
+  useEffect(() => {
+    refreshNativeDeviceState();
+
+    const onPermissionEvent = () => {
+      refreshNativeDeviceState();
     };
-    initStorage();
+    window.addEventListener('android_permission_result', onPermissionEvent);
     return () => {
-      mounted = false;
+      window.removeEventListener('android_permission_result', onPermissionEvent);
     };
   }, []);
 
@@ -266,6 +385,9 @@ export default function App() {
     setSearchQuery('');
 
     if (screen.type === 'folder') {
+      if (isRunningInAndroidApp()) {
+        loadNativeFolder(screen.folderId);
+      }
       const folderNode = files.find((f) => f.id === screen.folderId);
       if (folderNode) {
         const path = getNodePath(folderNode.id, files);
@@ -273,6 +395,19 @@ export default function App() {
           { id: folderNode.id, label: folderNode.name, path },
           ...prev.filter((item) => item.id !== folderNode.id),
         ].slice(0, 12));
+      }
+    } else if (screen.type === 'category' && isRunningInAndroidApp()) {
+      const bridge = getNativeBridge();
+      if (bridge && typeof bridge.scanAllCategories === 'function') {
+        try {
+          const raw = bridge.scanAllCategories();
+          if (raw) {
+            const scanned = JSON.parse(raw) as FileNode[];
+            if (Array.isArray(scanned)) mergeNativeNodes(null, scanned, false);
+          }
+        } catch {
+          // ignore
+        }
       }
     }
 
@@ -369,18 +504,12 @@ export default function App() {
 
   const handleRequestStoragePermission = async () => {
     await requestStoragePermission();
-    setHasStoragePermission(true);
     setStoragePermissionOpen(false);
-    showToast('Storage permission granted');
-
-    const totalFilesBytes = files.reduce(
-      (acc, f) => acc + (f.kind === 'folder' ? 0 : f.size),
-      0
-    );
-    const stats = await getLiveStorageStats(totalFilesBytes);
-    setStorageStats(stats);
+    await refreshNativeDeviceState();
 
     if (!isRunningInAndroidApp()) {
+      setHasStoragePermission(true);
+      showToast('Storage permission granted');
       folderScanInputRef.current?.click();
     }
   };
@@ -480,9 +609,50 @@ export default function App() {
     }));
   };
 
+  const handleOpenFile = (file: FileNode) => {
+    const bridge = getNativeBridge();
+    if (bridge && file.realPath) {
+      if (file.kind === 'apk' && typeof bridge.installApk === 'function') {
+        const ok = bridge.installApk(file.realPath);
+        if (ok) return;
+      }
+      if (file.kind === 'text' && file.size <= 512 * 1024 && typeof bridge.readTextFile === 'function') {
+        try {
+          const text = bridge.readTextFile(file.realPath);
+          setViewingFile({ ...file, content: text });
+          return;
+        } catch {
+          // fall through to viewer
+        }
+      }
+      if (typeof bridge.openFile === 'function') {
+        const ok = bridge.openFile(file.realPath, '');
+        if (ok) return;
+      }
+    }
+    setViewingFile(file);
+  };
+
   const handleCreateNewItem = (name: string, type: 'folder' | 'text' | 'file') => {
     const targetParentId =
       activeScreen.type === 'folder' ? activeScreen.folderId : 'internal_root';
+    const bridge = getNativeBridge();
+    if (bridge) {
+      const parentPath = getNodePath(targetParentId, files);
+      const ok =
+        type === 'folder'
+          ? bridge.createFolder?.(parentPath, name)
+          : bridge.createTextFile?.(parentPath, name, '');
+      setNewItemType(null);
+      if (ok) {
+        loadNativeFolder(targetParentId, parentPath);
+        showToast(`Created ${name}`);
+      } else {
+        showToast(`Failed to create ${name}`);
+      }
+      return;
+    }
+
     const now = Date.now();
     const newNode: FileNode = {
       id: `node_${now}_${Math.random().toString(36).slice(2, 6)}`,
@@ -502,6 +672,31 @@ export default function App() {
 
   const handlePaste = (targetFolderId: string) => {
     if (!clipboard) return;
+    const bridge = getNativeBridge();
+    if (bridge && typeof bridge.copyOrMovePaths === 'function') {
+      const sourcePaths = clipboard.itemIds
+        .map((id) => files.find((n) => n.id === id)?.realPath)
+        .filter((p): p is string => Boolean(p));
+      const targetDir = getNodePath(targetFolderId, files);
+      if (sourcePaths.length > 0 && targetDir) {
+        const ok = bridge.copyOrMovePaths(
+          JSON.stringify(sourcePaths),
+          targetDir,
+          clipboard.mode === 'cut'
+        );
+        setClipboard(null);
+        if (ok) {
+          loadNativeFolder(targetFolderId, targetDir);
+          showToast(
+            `${clipboard.mode === 'cut' ? 'Moved' : 'Copied'} ${sourcePaths.length} item(s)`
+          );
+        } else {
+          showToast('Operation failed');
+        }
+        return;
+      }
+    }
+
     const now = Date.now();
 
     if (clipboard.mode === 'cut') {
@@ -514,7 +709,6 @@ export default function App() {
       );
       showToast(`Moved ${clipboard.itemIds.length} item(s)`);
     } else {
-      // Deep clone selected items & descendants into targetFolderId
       setFiles((prev) => {
         const clones: FileNode[] = [];
         const cloneSubtree = (nodeId: string, newParentId: string, isRootItem: boolean) => {
@@ -545,6 +739,25 @@ export default function App() {
   };
 
   const handleDelete = (ids: string[], permanent = false) => {
+    const bridge = getNativeBridge();
+    if (bridge && typeof bridge.deletePaths === 'function') {
+      const paths = ids
+        .map((id) => files.find((n) => n.id === id)?.realPath)
+        .filter((p): p is string => Boolean(p));
+      if (paths.length > 0) {
+        const ok = bridge.deletePaths(JSON.stringify(paths), !permanent);
+        if (ok) {
+          setFiles((prev) => prev.filter((n) => !ids.includes(n.id)));
+          showToast(
+            permanent
+              ? `Deleted ${paths.length} item(s)`
+              : `Moved ${paths.length} item(s) to Recycle Bin`
+          );
+          return;
+        }
+      }
+    }
+
     if (permanent) {
       setFiles((prev) => prev.filter((n) => !ids.includes(n.id)));
       showToast(`Permanently deleted ${ids.length} item(s)`);
@@ -581,6 +794,22 @@ export default function App() {
   };
 
   const handleBatchRenameConfirm = (renames: { id: string; newName: string }[]) => {
+    const bridge = getNativeBridge();
+    if (bridge && typeof bridge.renamePath === 'function') {
+      for (const r of renames) {
+        const target = files.find((f) => f.id === r.id);
+        if (target?.realPath) {
+          bridge.renamePath(target.realPath, r.newName);
+        }
+      }
+      setRenameTargetIds(null);
+      if (activeScreen.type === 'folder') {
+        loadNativeFolder(activeScreen.folderId);
+      }
+      showToast(`Renamed ${renames.length} item(s)`);
+      return;
+    }
+
     const map = new Map(renames.map((r) => [r.id, r.newName]));
     const now = Date.now();
     setFiles((prev) =>
@@ -600,6 +829,17 @@ export default function App() {
   };
 
   const handleShare = async (ids: string[]) => {
+    const bridge = getNativeBridge();
+    if (bridge && typeof bridge.shareFiles === 'function') {
+      const paths = ids
+        .map((id) => files.find((f) => f.id === id)?.realPath)
+        .filter((p): p is string => Boolean(p));
+      if (paths.length > 0) {
+        bridge.shareFiles(JSON.stringify(paths));
+        return;
+      }
+    }
+
     const names = files
       .filter((f) => ids.includes(f.id))
       .map((f) => f.name)
@@ -667,6 +907,11 @@ export default function App() {
   };
 
   const handleSaveTextFile = (id: string, content: string) => {
+    const bridge = getNativeBridge();
+    const target = files.find((n) => n.id === id);
+    if (bridge && target?.realPath && typeof bridge.writeTextFile === 'function') {
+      bridge.writeTextFile(target.realPath, content);
+    }
     const byteLen = new TextEncoder().encode(content).length;
     setFiles((prev) =>
       prev.map((n) =>
@@ -902,6 +1147,7 @@ export default function App() {
               mode="search"
               searchQuery={searchQuery}
               files={files}
+              storageStats={storageStats}
               showHidden={settings.showHiddenFiles}
               showThumbnails={settings.showThumbnails}
               viewMode={settings.viewMode}
@@ -913,7 +1159,7 @@ export default function App() {
                 setSearchQuery('');
               }}
               onOpenFolder={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
-              onOpenFile={setViewingFile}
+              onOpenFile={handleOpenFile}
               onCopy={(ids) => {
                 setClipboard({ mode: 'copy', itemIds: ids });
                 showToast(`${ids.length} item(s) copied`);
@@ -954,6 +1200,7 @@ export default function App() {
                 activeScreen.type === 'category' ? activeScreen.category : undefined
               }
               files={files}
+              storageStats={storageStats}
               showHidden={settings.showHiddenFiles}
               showThumbnails={settings.showThumbnails}
               viewMode={settings.viewMode}
@@ -962,7 +1209,7 @@ export default function App() {
               clipboard={clipboard}
               onBackHome={() => navigateInActiveTab({ type: 'home' })}
               onOpenFolder={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
-              onOpenFile={setViewingFile}
+              onOpenFile={handleOpenFile}
               onCopy={(ids) => {
                 setClipboard({ mode: 'copy', itemIds: ids });
                 showToast(`${ids.length} item(s) copied`);
@@ -990,7 +1237,7 @@ export default function App() {
               onSelectTool={(tool) => navigateInActiveTab({ type: 'analyzer', tool })}
               onBackHome={() => navigateInActiveTab({ type: 'home' })}
               onOpenFolder={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
-              onOpenFile={setViewingFile}
+              onOpenFile={handleOpenFile}
               onDeleteFiles={(ids) => handleDelete(ids, false)}
               onCleanEmptyFolders={handleCleanEmptyFolders}
               onClearAppCache={handleClearAppCache}
@@ -1042,6 +1289,7 @@ export default function App() {
       <UpdateModal
         open={updateModalOpen}
         currentVersion={settings.currentVersionName}
+        currentVersionCode={settings.currentVersionCode}
         newVersion={LATEST_VERSION_NAME}
         scenario={settings.updateScenario}
         onClose={() => setUpdateModalOpen(false)}

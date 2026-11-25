@@ -15,6 +15,7 @@ export interface FileNode {
   content?: string;
   hash?: string; // used for duplicate file detection
   isAppCache?: boolean;
+  realPath?: string; // absolute device filesystem path when running inside Android APK
 }
 
 export type SortBy = 'name' | 'size' | 'date' | 'type';

@@ -81,8 +81,10 @@ export function computeFolderStats(
 
 export function getNodePath(nodeId: string, allNodes: FileNode[]): string {
   const byId = new Map(allNodes.map((n) => [n.id, n]));
+  const direct = byId.get(nodeId);
+  if (direct?.realPath) return direct.realPath;
   const parts: string[] = [];
-  let curr = byId.get(nodeId);
+  let curr = direct;
   while (curr) {
     if (curr.id === 'internal_root') {
       parts.unshift('/storage/emulated/0');
