@@ -93,7 +93,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
           className={navItemClass(isInternal)}
         >
           <HardDrive size={19} />
-          <span>Internal Storage</span>
+          <span>Internal</span>
         </button>
 
         {settings.sdCardMounted && (
@@ -106,7 +106,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
             className={navItemClass(isExternal)}
           >
             <MemoryStick size={19} />
-            <span>External Storage</span>
+            <span>External</span>
           </button>
         )}
 

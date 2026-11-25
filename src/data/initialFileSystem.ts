@@ -10,7 +10,7 @@ export const SD_TOTAL_BYTES = 64 * 1024 * 1024 * 1024; // 64 GB
 export const INITIAL_FILES: FileNode[] = [
   {
     id: 'internal_root',
-    name: 'Internal Storage',
+    name: 'Internal',
     parentId: null,
     kind: 'folder',
     size: 0,
@@ -18,7 +18,7 @@ export const INITIAL_FILES: FileNode[] = [
   },
   {
     id: 'sd_root',
-    name: 'SD Card',
+    name: 'External',
     parentId: null,
     kind: 'folder',
     size: 0,

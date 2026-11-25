@@ -416,7 +416,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
                 {/* Middle: Title + Metadata row */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[15px] font-medium text-slate-900 dark:text-slate-100 truncate">
+                    <span className="text-[15px] font-medium text-slate-900 dark:text-slate-100 break-words leading-snug">
                       {node.name}
                     </span>
                     {node.favourite && (

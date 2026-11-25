@@ -1,32 +1,22 @@
 import React from 'react';
 import { ArrowLeft, Monitor, Moon, Sun } from 'lucide-react';
-import { AppSettings, ThemeMode, UpdateScenario } from '../types/fileManager';
+import { AppSettings, ThemeMode } from '../types/fileManager';
 
 interface SettingsViewProps {
   settings: AppSettings;
   onUpdateSettings: (patch: Partial<AppSettings>) => void;
   onBackHome: () => void;
-  onCheckUpdate: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   onUpdateSettings,
   onBackHome,
-  onCheckUpdate,
 }) => {
   const themes: { id: ThemeMode; label: string; icon: React.ReactNode }[] = [
     { id: 'light', label: 'Light', icon: <Sun size={16} /> },
     { id: 'dark', label: 'Dark', icon: <Moon size={16} /> },
     { id: 'system', label: 'System', icon: <Monitor size={16} /> },
-  ];
-
-  const updateScenarios: { id: UpdateScenario; label: string }[] = [
-    { id: 'available', label: 'New Version Available (v1.2.0)' },
-    { id: 'up_to_date', label: 'Already Using Latest Version' },
-    { id: 'permission_required', label: 'Missing Install Permission Prompt' },
-    { id: 'offline_error', label: 'Offline / Network Error' },
-    { id: 'corrupted_apk', label: 'Corrupted APK Integrity Error' },
   ];
 
   return (
@@ -78,7 +68,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               Show Hidden Files
             </div>
             <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Display dot-files such as .nomedia and .ag_cache
+              Display dot-files such as .nomedia and hidden folders
             </div>
           </div>
           <button
@@ -130,7 +120,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               External SD Card Inserted
             </div>
             <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Toggle off to verify the SD Card slot hides cleanly with zero errors
+              Show or hide the External SD Card storage slot
             </div>
           </div>
           <button
@@ -148,46 +138,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               }`}
             />
           </button>
-        </div>
-      </section>
-
-      {/* In-App Update Verification Controls */}
-      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              In-App Update System
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Installed version: v{settings.currentVersionName} · Test update states
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onCheckUpdate}
-            className="min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shrink-0"
-          >
-            Check Update
-          </button>
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
-            Update Test Scenario
-          </label>
-          <select
-            value={settings.updateScenario}
-            onChange={(e) =>
-              onUpdateSettings({ updateScenario: e.target.value as UpdateScenario })
-            }
-            className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
-          >
-            {updateScenarios.map((sc) => (
-              <option key={sc.id} value={sc.id}>
-                {sc.label}
-              </option>
-            ))}
-          </select>
         </div>
       </section>
     </div>

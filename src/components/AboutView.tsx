@@ -44,13 +44,19 @@ export const AboutView: React.FC<AboutViewProps> = ({
 
         <div className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
           <div className="py-3 flex items-center justify-between gap-4">
-            <span className="text-slate-500 dark:text-slate-400">Package ID</span>
-            <span className="font-mono text-slate-900 dark:text-slate-100">com.ag.filemanager</span>
+            <span className="text-slate-500 dark:text-slate-400">Apps Owner Name</span>
+            <span className="font-medium text-slate-900 dark:text-slate-100">Abujar Al-Gifari</span>
           </div>
           <div className="py-3 flex items-center justify-between gap-4">
-            <span className="text-slate-500 dark:text-slate-400">Download Path</span>
+            <span className="text-slate-500 dark:text-slate-400">Email</span>
             <span className="font-mono text-xs sm:text-sm text-slate-900 dark:text-slate-100">
-              /storage/emulated/0/Download/
+              abujar287.algifari@gmail.com
+            </span>
+          </div>
+          <div className="py-3 flex items-center justify-between gap-4">
+            <span className="text-slate-500 dark:text-slate-400">Version</span>
+            <span className="font-mono text-slate-900 dark:text-slate-100 tabular-nums">
+              {settings.currentVersionName} (Build {settings.currentVersionCode})
             </span>
           </div>
         </div>

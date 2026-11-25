@@ -88,7 +88,15 @@ export default function App() {
       const raw = localStorage.getItem(FILES_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as FileNode[];
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((n) =>
+            n.id === 'internal_root'
+              ? { ...n, name: 'Internal' }
+              : n.id === 'sd_root'
+                ? { ...n, name: 'External' }
+                : n
+          );
+        }
       }
     } catch {
       // ignore storage read errors
@@ -218,7 +226,7 @@ export default function App() {
     const id = `tab_${Date.now()}`;
     const newTab: TabWindow = {
       id,
-      title: 'Internal Storage',
+      title: 'Internal',
       screen: { type: 'folder', folderId: 'internal_root' },
     };
     setTabs((prev) => [...prev, newTab]);
@@ -750,7 +758,6 @@ export default function App() {
               settings={settings}
               onUpdateSettings={(patch) => setSettings((prev) => ({ ...prev, ...patch }))}
               onBackHome={() => navigateInActiveTab({ type: 'home' })}
-              onCheckUpdate={() => setUpdateModalOpen(true)}
             />
           ) : (
             <AboutView
