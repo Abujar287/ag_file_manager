@@ -121,12 +121,9 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         current: RemoteVersionManifest | null,
         candidate: RemoteVersionManifest
       ): RemoteVersionManifest => {
-        if (
-          !current ||
-          candidate.versionCode > current.versionCode ||
-          (candidate.versionCode === current.versionCode &&
-            compareVersionNames(candidate.versionName, current.versionName) > 0)
-        ) {
+        if (!current) return candidate;
+        const verDiff = compareVersionNames(candidate.versionName, current.versionName);
+        if (verDiff > 0 || (verDiff === 0 && candidate.versionCode > current.versionCode)) {
           return candidate;
         }
         return current;

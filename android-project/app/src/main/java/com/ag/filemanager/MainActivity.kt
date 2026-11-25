@@ -1876,7 +1876,7 @@ class MainActivity : Activity() {
                         put("code", "signature_mismatch")
                         put(
                             "reason",
-                            "This APK uses a different signing key than the installed AG File Manager. Uninstall the old app once, then install ${apkFile.name} cleanly."
+                            "The installed version uses an older temporary signing key. Uninstall the old app once, then install ${apkFile.name} — all future updates will work cleanly with the Update button."
                         )
                     }.toString()
                 }
@@ -1922,7 +1922,8 @@ class MainActivity : Activity() {
 
                 fun considerCandidate(code: Int, name: String, url: String) {
                     if (name.isBlank() || code <= 0) return
-                    val better = bestCode < 0 || code > bestCode || (code == bestCode && compareVer(name, bestName) > 0)
+                    val verCmp = compareVer(name, bestName)
+                    val better = bestCode < 0 || verCmp > 0 || (verCmp == 0 && code > bestCode)
                     if (better) {
                         bestCode = code
                         bestName = name
@@ -1937,6 +1938,7 @@ class MainActivity : Activity() {
                             connectTimeout = 8000
                             readTimeout = 8000
                             requestMethod = "GET"
+                            setRequestProperty("User-Agent", "AGFileManager/${BuildConfig.VERSION_NAME}")
                             setRequestProperty("Cache-Control", "no-cache")
                             if (acceptHeader != null) setRequestProperty("Accept", acceptHeader)
                         }

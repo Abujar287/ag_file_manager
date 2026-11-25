@@ -60,7 +60,9 @@ class UpdateManager(
             val result = fetchUpdateManifest()
             mainHandler.post {
                 result.onSuccess { info ->
-                    if (info.versionCode > BuildConfig.VERSION_CODE) {
+                    if (info.versionCode > BuildConfig.VERSION_CODE ||
+                        compareVer(info.versionName, BuildConfig.VERSION_NAME) > 0
+                    ) {
                         showMinimalUpdateDialog(info)
                     } else {
                         AlertDialog.Builder(activity)
@@ -324,7 +326,7 @@ class UpdateManager(
             if (installedSigs.isNotEmpty() && archiveSigs.isNotEmpty() && installedSigs.intersect(archiveSigs).isEmpty()) {
                 AlertDialog.Builder(activity)
                     .setTitle("Reinstall Required Once")
-                    .setMessage("The installed version uses a different signing key. Uninstall the old app once, then install ${apkFile.name} from Download.")
+                    .setMessage("The installed version uses an older temporary signing key. Uninstall the old app once, then install ${apkFile.name} from Download — future updates will work cleanly with the Update button.")
                     .setNegativeButton("Cancel", null)
                     .setPositiveButton("Uninstall Old App") { _, _ ->
                         try {
@@ -413,6 +415,18 @@ class UpdateManager(
         pollRunnable = null
     }
 
+    private fun compareVer(a: String, b: String): Int {
+        if (b.isBlank()) return if (a.isNotBlank()) 1 else 0
+        val pa = a.removePrefix("v").removePrefix("V").split(".").map { it.toIntOrNull() ?: 0 }
+        val pb = b.removePrefix("v").removePrefix("V").split(".").map { it.toIntOrNull() ?: 0 }
+        val len = maxOf(pa.size, pb.size, 3)
+        for (i in 0 until len) {
+            val diff = (pa.getOrNull(i) ?: 0) - (pb.getOrNull(i) ?: 0)
+            if (diff != 0) return diff
+        }
+        return 0
+    }
+
     private fun fetchUpdateManifest(): Result<UpdateInfo> {
         val candidates = listOf(
             manifestUrl,
@@ -429,6 +443,8 @@ class UpdateManager(
                     connectTimeout = 8000
                     readTimeout = 8000
                     requestMethod = "GET"
+                    setRequestProperty("User-Agent", "AGFileManager/${BuildConfig.VERSION_NAME}")
+                    setRequestProperty("Cache-Control", "no-cache")
                 }
                 if (conn.responseCode in 200..299) {
                     val body = conn.inputStream.bufferedReader().use { it.readText() }
@@ -438,7 +454,8 @@ class UpdateManager(
                         versionName = json.getString("versionName"),
                         apkUrl = json.getString("apkUrl")
                     )
-                    if (best == null || info.versionCode > best.versionCode) {
+                    val verCmp = if (best == null) 1 else compareVer(info.versionName, best.versionName)
+                    if (best == null || verCmp > 0 || (verCmp == 0 && info.versionCode > best.versionCode)) {
                         best = info
                     }
                 } else {

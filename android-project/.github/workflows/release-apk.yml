@@ -37,15 +37,6 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Persist fallback CI debug keystore when custom release secret is unset
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: ag-file-manager-ci-signing-key-v2-${{ github.run_id }}
-          restore-keys: |
-            ag-file-manager-ci-signing-key-v2-
-            ag-file-manager-ci-signing-key-v1
-
       - name: Decode persistent release keystore if configured
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
@@ -77,6 +68,10 @@ jobs:
           V_NAME=$(grep -oE 'versionName = .*' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/' | head -n 1)
           V_CODE=$(grep -oE 'versionCode = .*' app/build.gradle.kts | grep -oE '[0-9]+' | tail -n 1)
           cp app/build/outputs/apk/release/app-release.apk "AG_File_Manager_v${V_NAME}.apk"
+          APKSIGNER_BIN=$(command -v apksigner || find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner | head -n 1 || true)
+          if [ -n "$APKSIGNER_BIN" ]; then
+            "$APKSIGNER_BIN" verify --verbose --print-certs "AG_File_Manager_v${V_NAME}.apk"
+          fi
           cat <<EOF > version.json
           {
             "versionCode": $V_CODE,

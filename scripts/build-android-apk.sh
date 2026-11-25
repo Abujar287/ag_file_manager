@@ -111,7 +111,7 @@ fi
 echo "[4/4] Verifying APK signature and binary package integrity..."
 APKSIGNER_BIN=$(command -v apksigner || find "$ANDROID_HOME/build-tools" -name apksigner | head -n 1 || true)
 if [ -n "$APKSIGNER_BIN" ]; then
-  "$APKSIGNER_BIN" verify --verbose "$BUILT_APK"
+  "$APKSIGNER_BIN" verify --verbose --print-certs "$BUILT_APK"
 fi
 
 AAPT_BIN=$(command -v aapt || find "$ANDROID_HOME/build-tools" -name aapt | head -n 1 || true)

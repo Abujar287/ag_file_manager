@@ -53,15 +53,6 @@ jobs:
         with:
           gradle-version: "8.10.2"
 
-      - name: Persist fallback CI debug keystore when custom release secret is unset
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: ag-file-manager-ci-signing-key-v2-${{ github.run_id }}
-          restore-keys: |
-            ag-file-manager-ci-signing-key-v2-
-            ag-file-manager-ci-signing-key-v1
-
       - name: Auto-bump version on main push (or apply tag/manual version)
         id: bump
         env:

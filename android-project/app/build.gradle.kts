@@ -44,6 +44,16 @@ android {
                     ?: keystoreProperties.getProperty("keyPassword")
             }
         }
+        create("ciSigning") {
+            val ciStore = file("ci-signing.p12")
+            if (ciStore.exists()) {
+                storeFile = ciStore
+                storeType = "PKCS12"
+                storePassword = "agfilemanager"
+                keyAlias = "agfilemanager"
+                keyPassword = "agfilemanager"
+            }
+        }
     }
 
     buildTypes {
@@ -56,16 +66,19 @@ android {
                 "proguard-rules.pro"
             )
             val releaseSigning = signingConfigs.getByName("release")
-            signingConfig = if (releaseSigning.storeFile?.exists() == true) {
-                releaseSigning
-            } else {
-                signingConfigs.getByName("debug")
+            val ciSigning = signingConfigs.getByName("ciSigning")
+            signingConfig = when {
+                releaseSigning.storeFile?.exists() == true -> releaseSigning
+                ciSigning.storeFile?.exists() == true -> ciSigning
+                else -> signingConfigs.getByName("debug")
             }
         }
         debug {
             val releaseSigning = signingConfigs.getByName("release")
-            if (releaseSigning.storeFile?.exists() == true) {
-                signingConfig = releaseSigning
+            val ciSigning = signingConfigs.getByName("ciSigning")
+            when {
+                releaseSigning.storeFile?.exists() == true -> signingConfig = releaseSigning
+                ciSigning.storeFile?.exists() == true -> signingConfig = ciSigning
             }
         }
     }
