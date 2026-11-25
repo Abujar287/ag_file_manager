@@ -61,19 +61,39 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
     setInstallProgress(0);
     setPhase('checking');
 
-    const checkTimeout = window.setTimeout(() => {
-      if (scenario === 'offline_error') {
-        setErrorMessage('No internet connection. Please check your network and try again.');
-        setPhase('error');
-      } else if (scenario === 'up_to_date' || currentVersion === newVersion) {
-        setPhase('up_to_date');
-      } else {
-        setPhase('prompt');
+    let mounted = true;
+    const fetchLiveVersion = async () => {
+      try {
+        const res = await fetch('/version.json?' + Date.now());
+        if (!res.ok) throw new Error('Failed to check update server');
+        const data = await res.json();
+        if (!mounted) return;
+
+        if (data.versionCode && data.versionCode > 2) {
+          setPhase('prompt');
+        } else if (currentVersion === newVersion) {
+          setPhase('up_to_date');
+        } else {
+          setPhase('prompt');
+        }
+      } catch (e) {
+        if (!mounted) return;
+        if (scenario === 'offline_error') {
+          setErrorMessage('No internet connection. Please check your network and try again.');
+          setPhase('error');
+        } else if (scenario === 'up_to_date') {
+          setPhase('up_to_date');
+        } else {
+          setPhase('prompt');
+        }
       }
-    }, 300);
+    };
+
+    const timer = window.setTimeout(fetchLiveVersion, 350);
 
     return () => {
-      window.clearTimeout(checkTimeout);
+      mounted = false;
+      window.clearTimeout(timer);
       clearTimers();
     };
   }, [open, scenario, currentVersion, newVersion]);
