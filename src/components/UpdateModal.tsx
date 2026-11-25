@@ -108,6 +108,18 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         // Save directly into /storage/emulated/0/Download/ (Internal Storage -> Download)
         onSaveApkToPublicDownloads(targetFilename, TOTAL_APK_BYTES);
 
+        // Trigger actual browser download of the release APK file
+        try {
+          const a = document.createElement('a');
+          a.href = `/downloads/${targetFilename}`;
+          a.download = targetFilename;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        } catch {
+          // ignore download triggers if blocked
+        }
+
         if (scenario === 'permission_required') {
           setPhase('permission_prompt');
         } else {
