@@ -21,8 +21,8 @@ android {
         applicationId = "com.ag.filemanager"
         minSdk = 24
         targetSdk = 35
-        versionCode = (project.findProperty("VERSION_CODE") as? String)?.toIntOrNull() ?: 10
-        versionName = (project.findProperty("VERSION_NAME") as? String) ?: "1.2.7"
+        versionCode = (project.findProperty("VERSION_CODE") as? String)?.toIntOrNull() ?: 11
+        versionName = (project.findProperty("VERSION_NAME") as? String) ?: "1.2.8"
 
         // Strip all unused language packs to keep APK under ~1.8 MB
         resourceConfigurations += listOf("en")
