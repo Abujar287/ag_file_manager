@@ -308,7 +308,7 @@ const FileBrowserRow = memo<RowProps>(
 
 FileBrowserRow.displayName = 'FileBrowserRow';
 
-export const FileBrowser: React.FC<FileBrowserProps> = ({
+export const FileBrowser: React.FC<FileBrowserProps> = memo(({
   mode,
   folderId,
   category,
@@ -338,6 +338,8 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
   onShowProperties,
 }) => {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectedIdsRef = useRef<string[]>(selectedIds);
+  selectedIdsRef.current = selectedIds;
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [visibleLimit, setVisibleLimit] = useState(120);
   const longPressTimerRef = useRef<number | null>(null);
@@ -551,7 +553,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         longPressTriggeredRef.current = false;
         return;
       }
-      if (selectedIds.length > 0) {
+      if (selectedIdsRef.current.length > 0) {
         toggleSelect(node.id);
         return;
       }
@@ -561,7 +563,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
         onOpenFile(node);
       }
     },
-    [selectedIds.length, toggleSelect, onOpenFolder, onOpenFile]
+    [toggleSelect, onOpenFolder, onOpenFile]
   );
 
   const handleToggleDot = useCallback(
@@ -806,7 +808,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
 
       {/* Multi-Select Bottom Toolbar */}
       {isSelecting && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800">
+        <div className="fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shadow-lg">
           <div className="max-w-3xl mx-auto px-2 py-2 flex items-center justify-around gap-1">
             {isRecycleBin ? (
               <>
@@ -950,4 +952,4 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({
       )}
     </div>
   );
-};
+});

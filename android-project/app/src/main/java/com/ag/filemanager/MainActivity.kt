@@ -105,6 +105,9 @@ class MainActivity : Activity() {
     private fun setupWebView() {
         val wv = WebView(this)
         webView = wv
+        wv.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
+        wv.overScrollMode = android.view.View.OVER_SCROLL_NEVER
+        wv.scrollBarStyle = android.view.View.SCROLLBARS_INSIDE_OVERLAY
         setContentView(wv)
 
         wv.settings.apply {
@@ -445,11 +448,7 @@ class MainActivity : Activity() {
             sdRoot: String? = getSdRootCanonical(),
             allowThumbCreate: Boolean = true
         ): JSONObject {
-            val canonical = try {
-                file.canonicalPath
-            } catch (_: Exception) {
-                file.absolutePath
-            }
+            val canonical = file.absolutePath
             val isDir = file.isDirectory
             val kind = if (isDir) "folder" else inferKind(file.name)
             val parentId = forcedParentId ?: file.parentFile?.let {
@@ -549,15 +548,28 @@ class MainActivity : Activity() {
             val sdRoot = getSdRootCanonical()
             val resolvedParentId = mapParentId(targetDir, internalRoot, sdRoot)
             val jsonArr = JSONArray()
+            var newThumbsBudget = 20
 
             for (file in list) {
+                val isDir = file.isDirectory
+                val allowCreate = if (!isDir && newThumbsBudget > 0) {
+                    val k = inferKind(file.name)
+                    if (k == "image" || k == "video") {
+                        newThumbsBudget--
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
                 jsonArr.put(
                     fileToJson(
                         file = file,
                         forcedParentId = resolvedParentId,
                         internalRoot = internalRoot,
                         sdRoot = sdRoot,
-                        allowThumbCreate = true
+                        allowThumbCreate = allowCreate
                     )
                 )
             }
@@ -602,7 +614,7 @@ class MainActivity : Activity() {
 
             var scannedCount = 0
             val maxEntries = 3500
-            var newThumbsBudget = 60
+            var newThumbsBudget = 20
 
             while (queue.isNotEmpty() && scannedCount < maxEntries) {
                 val dir = queue.removeFirst()

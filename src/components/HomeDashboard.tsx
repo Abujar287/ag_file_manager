@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import {
   Archive,
   ArrowRight,
@@ -48,7 +48,7 @@ interface MicroSdCardProps {
   onClick: () => void;
 }
 
-const MicroSdCard: React.FC<MicroSdCardProps> = ({
+const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
   id,
   title,
   percent,
@@ -69,14 +69,11 @@ const MicroSdCard: React.FC<MicroSdCardProps> = ({
       type="button"
       disabled={!isMounted}
       onClick={() => isMounted && onClick()}
-      className={`group relative w-full text-left rounded-2xl transition-all duration-150 focus-visible:outline-2 focus-visible:outline-blue-500 select-none ${
+      className={`group relative w-full text-left rounded-2xl transition-transform duration-150 focus-visible:outline-2 focus-visible:outline-blue-500 select-none ${
         isMounted
-          ? 'cursor-pointer hover:brightness-105 active:scale-[0.99]'
+          ? 'cursor-pointer active:scale-[0.98]'
           : 'cursor-not-allowed opacity-85'
       }`}
-      style={{
-        filter: 'drop-shadow(0 4px 12px rgba(15, 23, 42, 0.4))',
-      }}
     >
       {/* Background SVG matching the reference image MicroSD Card */}
       <svg
@@ -188,9 +185,9 @@ const MicroSdCard: React.FC<MicroSdCardProps> = ({
       </div>
     </button>
   );
-};
+});
 
-export const HomeDashboard: React.FC<HomeDashboardProps> = ({
+export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
   files,
   sdCardMounted,
   storageStats,
@@ -200,28 +197,83 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   onOpenTool,
   onOpenCategory,
 }) => {
-  const parentMap = new Map(files.map((n) => [n.id, n.parentId]));
-  const isUnderRoot = (node: FileNode, rootId: string): boolean => {
-    let curr: string | null | undefined = node.parentId;
-    let guard = 0;
-    while (curr && guard < 30) {
-      if (curr === rootId) return true;
-      curr = parentMap.get(curr);
-      guard++;
+  const { internalFilesBytes, sdFilesBytes, counts } = useMemo(() => {
+    const parentMap = new Map<string, string | null>();
+    for (let i = 0; i < files.length; i++) {
+      parentMap.set(files[i].id, files[i].parentId);
     }
-    return false;
-  };
+    const sdMemo = new Map<string, boolean>();
+    const isUnderSd = (parentId: string | null | undefined): boolean => {
+      if (!parentId) return false;
+      const cached = sdMemo.get(parentId);
+      if (cached !== undefined) return cached;
+      let curr: string | null | undefined = parentId;
+      let guard = 0;
+      let result = false;
+      while (curr && guard < 30) {
+        if (curr === 'sd_root') {
+          result = true;
+          break;
+        }
+        curr = parentMap.get(curr);
+        guard++;
+      }
+      sdMemo.set(parentId, result);
+      return result;
+    };
 
-  let internalFilesBytes = 0;
-  let sdFilesBytes = 0;
-  for (const n of files) {
-    if (n.kind === 'folder') continue;
-    if (isUnderRoot(n, 'sd_root')) {
-      sdFilesBytes += n.size;
-    } else {
-      internalFilesBytes += n.size;
+    let intBytes = 0;
+    let extBytes = 0;
+    const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
+    const catCounts: Record<CategoryType, number> = {
+      images: 0,
+      videos: 0,
+      audio: 0,
+      apps: 0,
+      new_files: 0,
+      compressed: 0,
+      documents: 0,
+      recycle_bin: 0,
+    };
+
+    for (let i = 0; i < files.length; i++) {
+      const n = files[i];
+      if (n.trashed) {
+        catCounts.recycle_bin++;
+        continue;
+      }
+      if (n.kind === 'folder') continue;
+      if (isUnderSd(n.parentId)) {
+        extBytes += n.size;
+      } else {
+        intBytes += n.size;
+      }
+      if (n.modifiedAt >= sevenDaysAgo) catCounts.new_files++;
+      switch (n.kind) {
+        case 'image':
+          catCounts.images++;
+          break;
+        case 'video':
+          catCounts.videos++;
+          break;
+        case 'audio':
+          catCounts.audio++;
+          break;
+        case 'apk':
+          catCounts.apps++;
+          break;
+        case 'archive':
+          catCounts.compressed++;
+          break;
+        case 'document':
+        case 'text':
+          catCounts.documents++;
+          break;
+      }
     }
-  }
+
+    return { internalFilesBytes: intBytes, sdFilesBytes: extBytes, counts: catCounts };
+  }, [files]);
 
   // Live dynamic storage capacity
   const finalInternalTotal = storageStats?.internal?.totalBytes || INTERNAL_TOTAL_BYTES;
@@ -240,22 +292,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
     ? (storageStats?.external?.usedPercent ??
       Math.round((finalSdUsed / finalSdTotal) * 100))
     : 0;
-
-  // Category counts
-  const activeFiles = files.filter((n) => !n.trashed && n.kind !== 'folder');
-  const now = Date.now();
-  const sevenDaysAgo = now - 7 * 24 * 3600 * 1000;
-
-  const counts: Record<CategoryType, number> = {
-    images: activeFiles.filter((n) => n.kind === 'image').length,
-    videos: activeFiles.filter((n) => n.kind === 'video').length,
-    audio: activeFiles.filter((n) => n.kind === 'audio').length,
-    apps: activeFiles.filter((n) => n.kind === 'apk').length,
-    new_files: activeFiles.filter((n) => n.modifiedAt >= sevenDaysAgo).length,
-    compressed: activeFiles.filter((n) => n.kind === 'archive').length,
-    documents: activeFiles.filter((n) => n.kind === 'document' || n.kind === 'text').length,
-    recycle_bin: files.filter((n) => n.trashed).length,
-  };
 
   const quickTools: { id: AnalyzerToolType; label: string; icon: React.ReactNode }[] = [
     { id: 'file_analyzer', label: 'File Analyzer', icon: <BarChart3 size={16} /> },
@@ -430,4 +466,4 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       </section>
     </div>
   );
-};
+});

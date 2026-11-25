@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   ArrowLeft,
   BarChart3,
@@ -47,85 +47,102 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
   onCleanEmptyFolders,
   onClearAppCache,
 }) => {
-  const activeFiles = files.filter((n) => !n.trashed);
-  const nonFolderFiles = activeFiles.filter((n) => n.kind !== 'folder');
+  const {
+    breakdownGroups,
+    totalAnalyzedBytes,
+    largeFiles,
+    recentFiles,
+    emptyFolders,
+    cacheFiles,
+    totalCacheBytes,
+    duplicateGroups,
+  } = useMemo(() => {
+    const activeFiles = files.filter((n) => !n.trashed);
+    const nonFolderFiles = activeFiles.filter((n) => n.kind !== 'folder');
 
-  // Breakdown calculation for File Analyzer
-  const breakdownGroups = [
-    {
-      label: 'Videos',
-      color: 'bg-rose-500',
-      bytes: nonFolderFiles
-        .filter((f) => f.kind === 'video')
-        .reduce((acc, f) => acc + f.size, 0),
-    },
-    {
-      label: 'Archives & Disk Images',
-      color: 'bg-orange-500',
-      bytes: nonFolderFiles
-        .filter((f) => f.kind === 'archive' || f.kind === 'other')
-        .reduce((acc, f) => acc + f.size, 0),
-    },
-    {
-      label: 'Images',
-      color: 'bg-emerald-500',
-      bytes: nonFolderFiles
-        .filter((f) => f.kind === 'image')
-        .reduce((acc, f) => acc + f.size, 0),
-    },
-    {
-      label: 'Audio',
-      color: 'bg-violet-500',
-      bytes: nonFolderFiles
-        .filter((f) => f.kind === 'audio')
-        .reduce((acc, f) => acc + f.size, 0),
-    },
-    {
-      label: 'Apps (APK)',
-      color: 'bg-teal-500',
-      bytes: nonFolderFiles
-        .filter((f) => f.kind === 'apk')
-        .reduce((acc, f) => acc + f.size, 0),
-    },
-    {
-      label: 'Documents & Text',
-      color: 'bg-blue-500',
-      bytes: nonFolderFiles
-        .filter((f) => f.kind === 'document' || f.kind === 'text')
-        .reduce((acc, f) => acc + f.size, 0),
-    },
-  ];
-  const totalAnalyzedBytes = breakdownGroups.reduce((acc, g) => acc + g.bytes, 0);
+    let videoBytes = 0;
+    let archiveBytes = 0;
+    let imageBytes = 0;
+    let audioBytes = 0;
+    let apkBytes = 0;
+    let docBytes = 0;
 
-  // Large files (>= 50 MB)
-  const largeFiles = [...nonFolderFiles]
-    .filter((f) => f.size >= 50 * 1024 * 1024)
-    .sort((a, b) => b.size - a.size);
+    const large: FileNode[] = [];
+    const cache: FileNode[] = [];
+    let cacheBytesSum = 0;
+    const hashGroups = new Map<string, FileNode[]>();
+    const nonEmptyParentIds = new Set<string>();
 
-  // Recent files (last 30 sorted by modifiedAt desc)
-  const recentFiles = [...nonFolderFiles]
-    .sort((a, b) => b.modifiedAt - a.modifiedAt)
-    .slice(0, 20);
+    for (let i = 0; i < activeFiles.length; i++) {
+      const n = activeFiles[i];
+      if (n.parentId) nonEmptyParentIds.add(n.parentId);
+      if (n.isAppCache) {
+        cache.push(n);
+        cacheBytesSum += n.size;
+      }
+      if (n.kind === 'folder') continue;
 
-  // Empty folders
-  const emptyFolders = activeFiles.filter((n) => {
-    if (n.kind !== 'folder' || n.parentId === null || n.hidden) return false;
-    return !activeFiles.some((child) => child.parentId === n.id);
-  });
+      switch (n.kind) {
+        case 'video':
+          videoBytes += n.size;
+          break;
+        case 'archive':
+        case 'other':
+          archiveBytes += n.size;
+          break;
+        case 'image':
+          imageBytes += n.size;
+          break;
+        case 'audio':
+          audioBytes += n.size;
+          break;
+        case 'apk':
+          apkBytes += n.size;
+          break;
+        case 'document':
+        case 'text':
+          docBytes += n.size;
+          break;
+      }
 
-  // App cache
-  const cacheFiles = activeFiles.filter((n) => n.isAppCache);
-  const totalCacheBytes = cacheFiles.reduce((acc, f) => acc + f.size, 0);
+      if (n.size >= 50 * 1024 * 1024) large.push(n);
+      if (n.hash) {
+        const arr = hashGroups.get(n.hash) || [];
+        arr.push(n);
+        hashGroups.set(n.hash, arr);
+      }
+    }
 
-  // Duplicate files (grouped by hash)
-  const hashGroups = new Map<string, FileNode[]>();
-  for (const f of nonFolderFiles) {
-    if (!f.hash) continue;
-    const arr = hashGroups.get(f.hash) || [];
-    arr.push(f);
-    hashGroups.set(f.hash, arr);
-  }
-  const duplicateGroups = Array.from(hashGroups.values()).filter((g) => g.length > 1);
+    const groups = [
+      { label: 'Videos', color: 'bg-rose-500', bytes: videoBytes },
+      { label: 'Archives & Disk Images', color: 'bg-orange-500', bytes: archiveBytes },
+      { label: 'Images', color: 'bg-emerald-500', bytes: imageBytes },
+      { label: 'Audio', color: 'bg-violet-500', bytes: audioBytes },
+      { label: 'Apps (APK)', color: 'bg-teal-500', bytes: apkBytes },
+      { label: 'Documents & Text', color: 'bg-blue-500', bytes: docBytes },
+    ];
+    const totalAnalyzed = groups.reduce((acc, g) => acc + g.bytes, 0);
+
+    large.sort((a, b) => b.size - a.size);
+    const recent = [...nonFolderFiles]
+      .sort((a, b) => b.modifiedAt - a.modifiedAt)
+      .slice(0, 20);
+    const empty = activeFiles.filter(
+      (n) => n.kind === 'folder' && n.parentId !== null && !n.hidden && !nonEmptyParentIds.has(n.id)
+    );
+    const dups = Array.from(hashGroups.values()).filter((g) => g.length > 1);
+
+    return {
+      breakdownGroups: groups,
+      totalAnalyzedBytes: totalAnalyzed,
+      largeFiles: large,
+      recentFiles: recent,
+      emptyFolders: empty,
+      cacheFiles: cache,
+      totalCacheBytes: cacheBytesSum,
+      duplicateGroups: dups,
+    };
+  }, [files]);
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 space-y-5">

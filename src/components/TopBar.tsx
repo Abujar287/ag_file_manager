@@ -16,7 +16,6 @@ import {
   XCircle,
 } from 'lucide-react';
 import { TabWindow } from '../types/fileManager';
-import { AppLogo } from './AppLogo';
 
 interface TopBarProps {
   onOpenDrawer: () => void;
@@ -89,7 +88,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+    <header className="sticky top-0 z-30 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800">
       <div className="h-14 px-3 sm:px-5 flex items-center justify-between gap-2">
         {searchOpen ? (
           <div className="flex-1 flex items-center gap-2">
@@ -126,8 +125,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         ) : (
           <>
-            {/* Left: 3-Line Drawer Icon + App Logo + App Title */}
-            <div className="flex items-center gap-2.5 min-w-0">
+            {/* Left: 3-Line Drawer Icon + App Title */}
+            <div className="flex items-center gap-2 min-w-0">
               <button
                 type="button"
                 onClick={onOpenDrawer}
@@ -136,12 +135,9 @@ export const TopBar: React.FC<TopBarProps> = ({
               >
                 <Menu size={22} />
               </button>
-              <div className="flex items-center gap-2 min-w-0">
-                <AppLogo size={26} />
-                <h1 className="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 truncate">
-                  AG File Manager
-                </h1>
-              </div>
+              <h1 className="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 truncate">
+                AG File Manager
+              </h1>
             </div>
 
             {/* Right: Home Icon Button, Search Icon Button, 3-Dot Overflow Menu */}
@@ -154,16 +150,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                 title="Home"
               >
                 <Home size={20} />
-              </button>
-
-              <button
-                type="button"
-                onClick={onOpenViewSort}
-                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                aria-label="View and Sort"
-                title="View & Sort"
-              >
-                <SlidersHorizontal size={19} />
               </button>
 
               <button

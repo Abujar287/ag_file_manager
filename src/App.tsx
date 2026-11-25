@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Home, Menu, X } from 'lucide-react';
 import {
   ActiveScreen,
@@ -200,9 +200,9 @@ export default function App() {
   const [viewSortModalOpen, setViewSortModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Left-edge swipe navigation state
-  const [edgeSwipeDx, setEdgeSwipeDx] = useState(0);
-  const edgeSwipeRef = useRef<{ active: boolean; startX: number; startY: number } | null>(null);
+  // Left-to-right swipe navigation state (DOM-driven to avoid 60fps full-tree re-renders)
+  const swipeIndicatorRef = useRef<HTMLDivElement>(null);
+  const edgeSwipeRef = useRef<{ active: boolean; startX: number; startY: number; lastDx: number } | null>(null);
 
   // Exit dialog & storage permission states (Points 1, 2, 6)
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
@@ -211,17 +211,20 @@ export default function App() {
   const [storageStats, setStorageStats] = useState<DeviceStorageStats | null>(null);
   const folderScanInputRef = useRef<HTMLInputElement>(null);
 
-  const showToast = (msg: string) => {
+  const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
-  };
+  }, []);
 
   useEffect(() => {
     if (isRunningInAndroidApp()) return;
-    try {
-      localStorage.setItem(FILES_STORAGE_KEY, JSON.stringify(files));
-    } catch {
-      // ignore quota errors
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        localStorage.setItem(FILES_STORAGE_KEY, JSON.stringify(files));
+      } catch {
+        // ignore quota errors
+      }
+    }, 400);
+    return () => window.clearTimeout(timer);
   }, [files]);
 
   useEffect(() => {
@@ -274,7 +277,14 @@ export default function App() {
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
   const activeScreen = activeTab.screen;
 
-  const mergeNativeNodes = (parentId: string | null, incoming: FileNode[], replaceSameParent = false) => {
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  const activeTabIdRef = useRef(activeTab.id);
+  activeTabIdRef.current = activeTab.id;
+  const storageStatsRef = useRef(storageStats);
+  storageStatsRef.current = storageStats;
+
+  const mergeNativeNodes = useCallback((parentId: string | null, incoming: FileNode[], replaceSameParent = false) => {
     setFiles((prev) => {
       const byId = new Map(prev.map((n) => [n.id, n]));
       if (replaceSameParent && parentId) {
@@ -289,24 +299,27 @@ export default function App() {
       }
       return Array.from(byId.values());
     });
-  };
+  }, []);
 
   const pendingDirRequestsRef = useRef<Map<string, string>>(new Map());
   const pendingCategoryReqRef = useRef<string | null>(null);
+  const lastCategoryScanAtRef = useRef<number>(0);
 
-  const loadNativeFolder = (folderId: string, explicitPath?: string) => {
+  const loadNativeFolder = useCallback((folderId: string, explicitPath?: string) => {
     const bridge = getNativeBridge();
     if (!bridge) return;
 
-    const targetNode = files.find((n) => n.id === folderId);
+    const currentFiles = filesRef.current;
+    const stats = storageStatsRef.current;
+    const targetNode = currentFiles.find((n) => n.id === folderId);
     const targetPath =
       explicitPath ||
       targetNode?.realPath ||
       (folderId === 'internal_root'
-        ? storageStats?.internal?.rootPath || '/storage/emulated/0'
+        ? stats?.internal?.rootPath || '/storage/emulated/0'
         : folderId === 'sd_root'
-          ? storageStats?.external?.rootPath || ''
-          : getNodePath(folderId, files));
+          ? stats?.external?.rootPath || ''
+          : getNodePath(folderId, currentFiles));
 
     if (!targetPath) return;
 
@@ -338,13 +351,18 @@ export default function App() {
         console.warn('Native directory reading failed:', e);
       }
     }
-  };
+  }, [mergeNativeNodes]);
 
-  const triggerAsyncCategoryScan = () => {
+  const triggerAsyncCategoryScan = useCallback((force = false) => {
     const bridge = getNativeBridge();
     if (!bridge) return;
+    const now = Date.now();
+    if (!force && lastCategoryScanAtRef.current > 0 && now - lastCategoryScanAtRef.current < 30000) {
+      return;
+    }
+    lastCategoryScanAtRef.current = now;
     if (typeof bridge.scanAllCategoriesAsync === 'function') {
-      const reqId = `cat_${Date.now()}`;
+      const reqId = `cat_${now}`;
       pendingCategoryReqRef.current = reqId;
       try {
         bridge.scanAllCategoriesAsync(reqId);
@@ -368,7 +386,7 @@ export default function App() {
         }
       }, 40);
     }
-  };
+  }, [mergeNativeNodes]);
 
   const refreshNativeDeviceState = async () => {
     const granted = await checkStoragePermissionGranted();
@@ -402,7 +420,7 @@ export default function App() {
     }
 
     if (granted) {
-      triggerAsyncCategoryScan();
+      triggerAsyncCategoryScan(true);
     }
   };
 
@@ -449,31 +467,33 @@ export default function App() {
     };
   }, []);
 
-  const navigateInActiveTab = (screen: ActiveScreen) => {
+  const navigateInActiveTab = useCallback((screen: ActiveScreen) => {
     setSearchOpen(false);
     setSearchQuery('');
 
+    const currentFiles = filesRef.current;
     if (screen.type === 'folder') {
       if (isRunningInAndroidApp()) {
         loadNativeFolder(screen.folderId);
       }
-      const folderNode = files.find((f) => f.id === screen.folderId);
+      const folderNode = currentFiles.find((f) => f.id === screen.folderId);
       if (folderNode) {
-        const path = getNodePath(folderNode.id, files);
+        const path = getNodePath(folderNode.id, currentFiles);
         setHistoryPaths((prev) => [
           { id: folderNode.id, label: folderNode.name, path },
           ...prev.filter((item) => item.id !== folderNode.id),
         ].slice(0, 12));
       }
     } else if (screen.type === 'category' && isRunningInAndroidApp()) {
-      triggerAsyncCategoryScan();
+      triggerAsyncCategoryScan(false);
     }
 
-    const title = getScreenTitle(screen, files);
+    const title = getScreenTitle(screen, currentFiles);
+    const targetTabId = activeTabIdRef.current;
     setTabs((prev) =>
-      prev.map((t) => (t.id === activeTab.id ? { ...t, title, screen } : t))
+      prev.map((t) => (t.id === targetTabId ? { ...t, title, screen } : t))
     );
-  };
+  }, [loadNativeFolder, triggerAsyncCategoryScan]);
 
   // Point 6: Hardware/System/Browser Back button logic:
   // Non-home screens/folders navigate back towards Home;
@@ -682,7 +702,7 @@ export default function App() {
     handleDownloadFileCopy(file);
   };
 
-  const handleOpenFile = (file: FileNode) => {
+  const handleOpenFile = useCallback((file: FileNode) => {
     const bridge = getNativeBridge();
     if (bridge && file.realPath) {
       if (file.kind === 'apk' && typeof bridge.installApk === 'function') {
@@ -736,7 +756,7 @@ export default function App() {
       }
     }
     setViewingFile(file);
-  };
+  }, []);
 
   const handleCreateNewItem = (name: string, type: 'folder' | 'text' | 'file') => {
     const targetParentId =
@@ -843,11 +863,12 @@ export default function App() {
     setClipboard(null);
   };
 
-  const handleDelete = (ids: string[], permanent = false) => {
+  const handleDelete = useCallback((ids: string[], permanent = false) => {
+    const currentFiles = filesRef.current;
     const bridge = getNativeBridge();
     if (bridge && typeof bridge.deletePaths === 'function') {
       const paths = ids
-        .map((id) => files.find((n) => n.id === id)?.realPath)
+        .map((id) => currentFiles.find((n) => n.id === id)?.realPath)
         .filter((p): p is string => Boolean(p));
       if (paths.length > 0) {
         const ok = bridge.deletePaths(JSON.stringify(paths), !permanent);
@@ -876,9 +897,9 @@ export default function App() {
       );
       showToast(`Moved ${ids.length} item(s) to Recycle Bin`);
     }
-  };
+  }, [showToast]);
 
-  const handleRestore = (ids: string[]) => {
+  const handleRestore = useCallback((ids: string[]) => {
     setFiles((prev) =>
       prev.map((n) =>
         ids.includes(n.id)
@@ -891,12 +912,12 @@ export default function App() {
       )
     );
     showToast(`Restored ${ids.length} item(s)`);
-  };
+  }, [showToast]);
 
-  const handleEmptyRecycleBin = () => {
+  const handleEmptyRecycleBin = useCallback(() => {
     setFiles((prev) => prev.filter((n) => !n.trashed));
     showToast('Recycle Bin emptied');
-  };
+  }, [showToast]);
 
   const handleBatchRenameConfirm = (renames: { id: string; newName: string }[]) => {
     const bridge = getNativeBridge();
@@ -933,11 +954,12 @@ export default function App() {
     showToast(`Renamed ${renames.length} item(s)`);
   };
 
-  const handleShare = async (ids: string[]) => {
+  const handleShare = useCallback(async (ids: string[]) => {
+    const currentFiles = filesRef.current;
     const bridge = getNativeBridge();
     if (bridge && typeof bridge.shareFiles === 'function') {
       const paths = ids
-        .map((id) => files.find((f) => f.id === id)?.realPath)
+        .map((id) => currentFiles.find((f) => f.id === id)?.realPath)
         .filter((p): p is string => Boolean(p));
       if (paths.length > 0) {
         bridge.shareFiles(JSON.stringify(paths));
@@ -945,7 +967,7 @@ export default function App() {
       }
     }
 
-    const names = files
+    const names = currentFiles
       .filter((f) => ids.includes(f.id))
       .map((f) => f.name)
       .join(', ');
@@ -962,14 +984,14 @@ export default function App() {
       }
     }
     showToast(`Ready to share: ${names}`);
-  };
+  }, [showToast]);
 
-  const handleToggleFavourite = (ids: string[]) => {
+  const handleToggleFavourite = useCallback((ids: string[]) => {
     setFiles((prev) =>
       prev.map((n) => (ids.includes(n.id) ? { ...n, favourite: !n.favourite } : n))
     );
     showToast('Updated favourites');
-  };
+  }, [showToast]);
 
   const handleCompressZip = (ids: string[]) => {
     const targets = files.filter((n) => ids.includes(n.id));
@@ -1137,49 +1159,116 @@ export default function App() {
     ? files.filter((f) => renameTargetIds.includes(f.id))
     : [];
 
-  const handleRootTouchStart = (e: React.TouchEvent) => {
+  const updateSwipeIndicator = useCallback((dx: number) => {
+    const el = swipeIndicatorRef.current;
+    if (!el) return;
+    if (dx > 12) {
+      el.style.display = 'flex';
+      el.style.transform = `translate3d(${Math.min(18, dx - 36)}px, -50%, 0)`;
+      el.style.opacity = String(Math.min(1, dx / 64));
+    } else {
+      el.style.display = 'none';
+      el.style.opacity = '0';
+    }
+  }, []);
+
+  const handleRootTouchStart = useCallback((e: React.TouchEvent) => {
     if (e.touches.length !== 1) return;
+    // Skip swipe when inside a horizontally scrollable strip (breadcrumbs, tabs, etc.)
+    let el = e.target as HTMLElement | null;
+    while (el && el !== e.currentTarget) {
+      if (el.scrollWidth > el.clientWidth + 4) {
+        const style = window.getComputedStyle(el);
+        if (style.overflowX === 'auto' || style.overflowX === 'scroll') {
+          edgeSwipeRef.current = null;
+          return;
+        }
+      }
+      el = el.parentElement;
+    }
     const touch = e.touches[0];
-    if (touch.clientX <= 42) {
+    const maxStartX = Math.max(220, window.innerWidth * 0.65);
+    if (touch.clientX <= maxStartX) {
       edgeSwipeRef.current = {
         active: true,
         startX: touch.clientX,
         startY: touch.clientY,
+        lastDx: 0,
       };
     } else {
       edgeSwipeRef.current = null;
     }
-  };
+  }, []);
 
-  const handleRootTouchMove = (e: React.TouchEvent) => {
+  const handleRootTouchMove = useCallback((e: React.TouchEvent) => {
     const state = edgeSwipeRef.current;
     if (!state || !state.active || e.touches.length !== 1) return;
     const dx = e.touches[0].clientX - state.startX;
     const dy = e.touches[0].clientY - state.startY;
-    if (Math.abs(dy) > 36 && Math.abs(dy) > Math.abs(dx)) {
+    if (Math.abs(dy) > 28 && Math.abs(dy) > Math.abs(dx) * 0.9) {
       edgeSwipeRef.current = null;
-      setEdgeSwipeDx(0);
+      updateSwipeIndicator(0);
       return;
     }
-    if (dx > 8) {
-      setEdgeSwipeDx(Math.min(110, dx));
+    if (dx > 8 && dx > Math.abs(dy) * 1.15) {
+      const clamped = Math.min(110, dx);
+      state.lastDx = clamped;
+      updateSwipeIndicator(clamped);
     }
-  };
+  }, [updateSwipeIndicator]);
 
-  const handleRootTouchEnd = () => {
+  const handleRootTouchEnd = useCallback(() => {
     const state = edgeSwipeRef.current;
-    if (state?.active && edgeSwipeDx >= 68) {
+    if (state?.active && state.lastDx >= 64) {
       if (activeScreen.type !== 'home' || searchOpen) {
         setSearchOpen(false);
         setSearchQuery('');
         navigateInActiveTab({ type: 'home' });
-      } else {
+      } else if (state.startX <= 96) {
         setDrawerOpen(true);
       }
     }
     edgeSwipeRef.current = null;
-    setEdgeSwipeDx(0);
-  };
+    updateSwipeIndicator(0);
+  }, [activeScreen.type, searchOpen, navigateInActiveTab, updateSwipeIndicator]);
+
+  const handleOpenFolderMemo = useCallback(
+    (folderId: string) => navigateInActiveTab({ type: 'folder', folderId }),
+    [navigateInActiveTab]
+  );
+  const handleBackHomeMemo = useCallback(
+    () => navigateInActiveTab({ type: 'home' }),
+    [navigateInActiveTab]
+  );
+  const handleBackSearchMemo = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery('');
+  }, []);
+  const handleOpenToolMemo = useCallback(
+    (tool: AnalyzerToolType) => navigateInActiveTab({ type: 'analyzer', tool }),
+    [navigateInActiveTab]
+  );
+  const handleOpenCategoryMemo = useCallback(
+    (category: CategoryType) => navigateInActiveTab({ type: 'category', category }),
+    [navigateInActiveTab]
+  );
+  const handleRequestPermissionMemo = useCallback(() => setStoragePermissionOpen(true), []);
+  const handleCopyMemo = useCallback(
+    (ids: string[]) => {
+      setClipboard({ mode: 'copy', itemIds: ids });
+      showToast(`${ids.length} item(s) copied`);
+    },
+    [showToast]
+  );
+  const handleCutMemo = useCallback(
+    (ids: string[]) => {
+      setClipboard({ mode: 'cut', itemIds: ids });
+      showToast(`${ids.length} item(s) ready to move`);
+    },
+    [showToast]
+  );
+  const handleCancelClipboardMemo = useCallback(() => setClipboard(null), []);
+  const handleRenameRequestMemo = useCallback((ids: string[]) => setRenameTargetIds(ids), []);
 
   return (
     <div
@@ -1189,21 +1278,17 @@ export default function App() {
       onTouchEnd={handleRootTouchEnd}
       onTouchCancel={handleRootTouchEnd}
     >
-      {/* Left-Edge Swipe Navigation Indicator */}
-      {edgeSwipeDx > 12 && (
-        <div
-          className="fixed left-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none flex items-center gap-1.5 pl-2 pr-3 py-2.5 rounded-r-2xl bg-blue-600 text-white shadow-xl transition-opacity"
-          style={{
-            transform: `translate3d(${Math.min(16, edgeSwipeDx - 36)}px, -50%, 0)`,
-            opacity: Math.min(1, edgeSwipeDx / 68),
-          }}
-        >
-          {activeScreen.type !== 'home' || searchOpen ? <Home size={18} /> : <Menu size={18} />}
-          <span className="text-xs font-semibold">
-            {activeScreen.type !== 'home' || searchOpen ? 'Home' : 'Menu'}
-          </span>
-        </div>
-      )}
+      {/* Left-to-Right Swipe Navigation Indicator (updated via DOM ref for zero lag) */}
+      <div
+        ref={swipeIndicatorRef}
+        style={{ display: 'none', opacity: 0 }}
+        className="fixed left-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none items-center gap-1.5 pl-2 pr-3 py-2.5 rounded-r-2xl bg-blue-600 text-white shadow-xl"
+      >
+        {activeScreen.type !== 'home' || searchOpen ? <Home size={18} /> : <Menu size={18} />}
+        <span className="text-xs font-semibold">
+          {activeScreen.type !== 'home' || searchOpen ? 'Home' : 'Menu'}
+        </span>
+      </div>
 
       {/* Hidden file picker for importing individual real files from device */}
       <input
@@ -1319,26 +1404,17 @@ export default function App() {
               sortBy={settings.sortBy}
               sortOrder={settings.sortOrder}
               clipboard={clipboard}
-              onBackHome={() => {
-                setSearchOpen(false);
-                setSearchQuery('');
-              }}
-              onOpenFolder={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
+              onBackHome={handleBackSearchMemo}
+              onOpenFolder={handleOpenFolderMemo}
               onOpenFile={handleOpenFile}
-              onCopy={(ids) => {
-                setClipboard({ mode: 'copy', itemIds: ids });
-                showToast(`${ids.length} item(s) copied`);
-              }}
-              onCut={(ids) => {
-                setClipboard({ mode: 'cut', itemIds: ids });
-                showToast(`${ids.length} item(s) ready to move`);
-              }}
+              onCopy={handleCopyMemo}
+              onCut={handleCutMemo}
               onPaste={handlePaste}
-              onCancelClipboard={() => setClipboard(null)}
+              onCancelClipboard={handleCancelClipboardMemo}
               onDelete={handleDelete}
               onRestore={handleRestore}
               onEmptyRecycleBin={handleEmptyRecycleBin}
-              onRenameRequest={(ids) => setRenameTargetIds(ids)}
+              onRenameRequest={handleRenameRequestMemo}
               onShare={handleShare}
               onToggleFavourite={handleToggleFavourite}
               onCompressZip={handleCompressZip}
@@ -1350,12 +1426,10 @@ export default function App() {
               sdCardMounted={settings.sdCardMounted}
               storageStats={storageStats}
               hasPermission={hasStoragePermission}
-              onRequestPermission={() => setStoragePermissionOpen(true)}
-              onOpenFolder={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
-              onOpenTool={(tool) => navigateInActiveTab({ type: 'analyzer', tool })}
-              onOpenCategory={(category) =>
-                navigateInActiveTab({ type: 'category', category })
-              }
+              onRequestPermission={handleRequestPermissionMemo}
+              onOpenFolder={handleOpenFolderMemo}
+              onOpenTool={handleOpenToolMemo}
+              onOpenCategory={handleOpenCategoryMemo}
             />
           ) : activeScreen.type === 'folder' || activeScreen.type === 'category' ? (
             <FileBrowser
@@ -1372,23 +1446,17 @@ export default function App() {
               sortBy={settings.sortBy}
               sortOrder={settings.sortOrder}
               clipboard={clipboard}
-              onBackHome={() => navigateInActiveTab({ type: 'home' })}
-              onOpenFolder={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
+              onBackHome={handleBackHomeMemo}
+              onOpenFolder={handleOpenFolderMemo}
               onOpenFile={handleOpenFile}
-              onCopy={(ids) => {
-                setClipboard({ mode: 'copy', itemIds: ids });
-                showToast(`${ids.length} item(s) copied`);
-              }}
-              onCut={(ids) => {
-                setClipboard({ mode: 'cut', itemIds: ids });
-                showToast(`${ids.length} item(s) ready to move`);
-              }}
+              onCopy={handleCopyMemo}
+              onCut={handleCutMemo}
               onPaste={handlePaste}
-              onCancelClipboard={() => setClipboard(null)}
+              onCancelClipboard={handleCancelClipboardMemo}
               onDelete={handleDelete}
               onRestore={handleRestore}
               onEmptyRecycleBin={handleEmptyRecycleBin}
-              onRenameRequest={(ids) => setRenameTargetIds(ids)}
+              onRenameRequest={handleRenameRequestMemo}
               onShare={handleShare}
               onToggleFavourite={handleToggleFavourite}
               onCompressZip={handleCompressZip}

@@ -228,7 +228,7 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
       {open && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div
-            className="fixed inset-0 bg-black/45 backdrop-blur-xs"
+            className="fixed inset-0 bg-black/45"
             onClick={onClose}
             aria-hidden="true"
           />
