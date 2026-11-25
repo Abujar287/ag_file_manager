@@ -2,5 +2,7 @@
   "name": "AG File Manager",
   "description": "Lightweight, minimal, and fast file manager with storage analysis, batch rename, multi-tab browsing, and seamless in-app APK update system.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
