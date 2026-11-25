@@ -32,7 +32,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -82,7 +81,7 @@ jobs:
 
       - name: Build web frontend
         run: |
-          npm ci || npm install
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Decode persistent release keystore if configured

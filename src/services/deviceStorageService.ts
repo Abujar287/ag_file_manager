@@ -51,6 +51,7 @@ export interface AndroidBridgeInterface {
   installApk?: (localPath: string) => boolean;
   exitApp?: () => void;
   openFile?: (path: string, mimeType: string) => boolean;
+  openUrlInBrowser?: (url: string) => boolean;
   shareFile?: (path: string) => void;
   shareFiles?: (pathsJson: string) => void;
 }
@@ -266,6 +267,35 @@ export function triggerSystemDownload(
     console.error('Browser download trigger failed:', e);
   }
   return null;
+}
+
+/**
+ * Opens the direct APK URL in an external browser or IDM (Internet Download Manager).
+ */
+export function openExternalDownloadUrl(url: string, fileName: string): void {
+  const resolved = resolveDownloadUrl(url);
+  const bridge = getNativeBridge();
+  if (bridge && typeof bridge.openUrlInBrowser === 'function') {
+    try {
+      if (bridge.openUrlInBrowser(resolved)) {
+        return;
+      }
+    } catch {
+      // fall back to anchor trigger
+    }
+  }
+  try {
+    const a = document.createElement('a');
+    a.href = resolved;
+    a.download = fileName;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } catch (e) {
+    console.error('External browser/IDM trigger failed:', e);
+  }
 }
 
 /**

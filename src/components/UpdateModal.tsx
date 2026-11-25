@@ -5,10 +5,12 @@ import {
   getRunningAppVersion,
   isRunningInAndroidApp,
   NativeDownloadProgress,
+  openExternalDownloadUrl,
   triggerSystemDownload,
 } from '../services/deviceStorageService';
 import {
   GITHUB_RELEASE_DOWNLOAD_BASE,
+  GITHUB_REPO,
   REMOTE_DOWNLOADS_BASE_URL,
   REMOTE_VERSION_JSON_URL,
 } from '../versionInfo';
@@ -90,30 +92,35 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
 
     const fetchManifest = async (): Promise<RemoteVersionManifest | null> => {
       const cacheBust = `?t=${Date.now()}`;
+      const githubRawMirror = `https://github.com/${GITHUB_REPO}/raw/main/version.json`;
       const urls =
         isFileProtocol || isRunningInAndroidApp()
-          ? [REMOTE_VERSION_JSON_URL + cacheBust]
+          ? [REMOTE_VERSION_JSON_URL + cacheBust, githubRawMirror + cacheBust]
           : ['./version.json' + cacheBust, REMOTE_VERSION_JSON_URL + cacheBust];
 
+      let best: RemoteVersionManifest | null = null;
       for (const url of urls) {
         try {
           const res = await fetch(url, { cache: 'no-store' });
           if (!res.ok) continue;
           const data = (await res.json()) as Partial<RemoteVersionManifest>;
           if (typeof data.versionCode === 'number' && typeof data.versionName === 'string') {
-            return {
+            const candidate: RemoteVersionManifest = {
               versionCode: data.versionCode,
               versionName: data.versionName,
               apkUrl:
                 data.apkUrl ||
                 `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${data.versionName}/AG_File_Manager_v${data.versionName}.apk`,
             };
+            if (!best || candidate.versionCode > best.versionCode) {
+              best = candidate;
+            }
           }
         } catch {
           // try next endpoint
         }
       }
-      return null;
+      return best;
     };
 
     const runCheck = async () => {
@@ -173,6 +180,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
     const manifestUrl = remoteManifest?.apkUrl;
     const githubReleaseUrl = `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${targetVersionName}/${targetFilename}`;
     const githubRawUrl = `${REMOTE_DOWNLOADS_BASE_URL}/${targetFilename}`;
+    const githubWebRawUrl = `https://github.com/${GITHUB_REPO}/raw/main/public/downloads/${targetFilename}`;
     const localWebUrl = `./downloads/${targetFilename}`;
 
     if (isRunningInAndroidApp() || window.location.protocol === 'file:') {
@@ -180,12 +188,38 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         manifestUrl && /^https?:\/\//i.test(manifestUrl) ? manifestUrl : githubReleaseUrl,
         githubReleaseUrl,
         githubRawUrl,
+        githubWebRawUrl,
       ];
       return Array.from(new Set(list));
     }
 
-    const list = [localWebUrl, manifestUrl || githubReleaseUrl, githubReleaseUrl, githubRawUrl];
+    const list = [
+      localWebUrl,
+      manifestUrl || githubReleaseUrl,
+      githubReleaseUrl,
+      githubRawUrl,
+      githubWebRawUrl,
+    ];
     return Array.from(new Set(list));
+  };
+
+  const resolveReachableWebUrl = async (candidates: string[]): Promise<{ url: string; size: number }> => {
+    for (const candidate of candidates) {
+      try {
+        const headRes = await fetch(candidate, { method: 'HEAD' });
+        if (headRes.ok) {
+          const len = parseInt(headRes.headers.get('content-length') || '0', 10);
+          if (len === 0 || len > 100_000) {
+            return { url: candidate, size: len };
+          }
+        }
+      } catch {
+        // Cross-origin HEAD may be blocked by CORS; keep checking explicit remote URLs if local failed
+      }
+    }
+    const remoteFallback =
+      candidates.find((u) => /^https?:\/\//i.test(u)) || candidates[0];
+    return { url: remoteFallback, size: 0 };
   };
 
   const startDownload = async () => {
@@ -198,107 +232,112 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
     const candidates = getDownloadCandidates();
     const primaryUrl = candidates[0];
 
-    // Path A: Native Android APK — use real DownloadManager + live progress polling
+    // Path A: Native Android APK — use real DownloadManager + automatic URL fallback + live progress
     if (bridge && typeof bridge.downloadWithDownloadManager === 'function') {
-      const dlId = triggerSystemDownload(
-        primaryUrl,
-        targetFilename,
-        `AG File Manager v${targetVersionName}`
-      );
+      const startCandidate = (idx: number) => {
+        if (idx >= candidates.length) {
+          clearTimers();
+          setErrorMessage(
+            'APK download failed from GitHub. Push to GitHub to publish the release APK or open via Browser / IDM.'
+          );
+          setPhase('error');
+          return;
+        }
 
-      if (dlId && typeof bridge.getDownloadProgress === 'function') {
-        timerRef.current = window.setInterval(() => {
-          try {
-            const raw = bridge.getDownloadProgress!(dlId);
-            if (!raw) return;
-            const prog = JSON.parse(raw) as NativeDownloadProgress;
-            if (prog.totalBytes > 0) {
-              setTotalMb(Math.max(0.1, prog.totalBytes / (1024 * 1024)));
-            }
-            if (prog.downloadedBytes >= 0) {
-              setDownloadedMb(prog.downloadedBytes / (1024 * 1024));
-            }
-            if (prog.status === 'successful') {
-              clearTimers();
-              const resolvedPath =
-                prog.localPath || `/storage/emulated/0/Download/${targetFilename}`;
-              setDownloadedApkPath(resolvedPath);
-              onSaveApkToPublicDownloads(targetFilename, prog.totalBytes || 2_500_000);
-              if (
-                typeof bridge.canRequestPackageInstalls === 'function' &&
-                !bridge.canRequestPackageInstalls()
-              ) {
-                setPhase('permission_prompt');
-              } else {
-                setPhase('installer_confirm');
+        const candidateUrl = candidates[idx];
+        const dlId = triggerSystemDownload(
+          candidateUrl,
+          targetFilename,
+          `AG File Manager v${targetVersionName}`
+        );
+
+        if (dlId && typeof bridge.getDownloadProgress === 'function') {
+          clearTimers();
+          timerRef.current = window.setInterval(() => {
+            try {
+              const raw = bridge.getDownloadProgress!(dlId);
+              if (!raw) return;
+              const prog = JSON.parse(raw) as NativeDownloadProgress;
+              if (prog.totalBytes > 0) {
+                setTotalMb(Math.max(0.1, prog.totalBytes / (1024 * 1024)));
               }
-            } else if (prog.status === 'failed') {
-              clearTimers();
-              setErrorMessage(
-                prog.reason ||
-                  'Download interrupted. You can also download via browser/IDM and tap Retry.'
-              );
-              setPhase('error');
+              if (prog.downloadedBytes >= 0) {
+                setDownloadedMb(prog.downloadedBytes / (1024 * 1024));
+              }
+              if (prog.status === 'successful') {
+                clearTimers();
+                const resolvedPath =
+                  prog.localPath || `/storage/emulated/0/Download/${targetFilename}`;
+                setDownloadedApkPath(resolvedPath);
+                onSaveApkToPublicDownloads(targetFilename, prog.totalBytes || 4_100_000);
+                if (
+                  typeof bridge.canRequestPackageInstalls === 'function' &&
+                  !bridge.canRequestPackageInstalls()
+                ) {
+                  setPhase('permission_prompt');
+                } else {
+                  setPhase('installer_confirm');
+                }
+              } else if (prog.status === 'failed') {
+                clearTimers();
+                if (idx + 1 < candidates.length) {
+                  setDownloadedMb(0);
+                  startCandidate(idx + 1);
+                } else {
+                  setErrorMessage(
+                    prog.reason ||
+                      'Download interrupted. Try Browser / IDM download or tap Retry.'
+                  );
+                  setPhase('error');
+                }
+              }
+            } catch {
+              // keep polling until finished
             }
-          } catch {
-            // keep polling until finished
-          }
-        }, 350);
-        return;
-      }
+          }, 350);
+          return;
+        }
 
-      // Download started in background notification
-      onSaveApkToPublicDownloads(targetFilename, 2_500_000);
-      setPhase('installer_confirm');
+        // Fallback if DownloadManager returned no ID (browser fallback launched externally)
+        onSaveApkToPublicDownloads(targetFilename, 4_100_000);
+        setPhase('installer_confirm');
+      };
+
+      startCandidate(0);
       return;
     }
 
     // Path B: Web / Mobile Browser — verify APK endpoint then trigger direct download (IDM-compatible)
     try {
-      let chosenUrl = primaryUrl;
-      let contentSize = 0;
-
-      for (const candidate of candidates) {
-        try {
-          const headRes = await fetch(candidate, { method: 'HEAD' });
-          if (headRes.ok) {
-            const len = parseInt(headRes.headers.get('content-length') || '0', 10);
-            if (len === 0 || len > 50000) {
-              chosenUrl = candidate;
-              contentSize = len;
-              break;
-            }
-          }
-        } catch {
-          // CORS on cross-origin HEAD is normal; fall back to direct browser download
-          if (/^https?:\/\//i.test(candidate)) {
-            chosenUrl = candidate;
-            break;
-          }
-        }
-      }
-
+      const { url: chosenUrl, size: contentSize } = await resolveReachableWebUrl(candidates);
       if (contentSize > 0) {
         setTotalMb(contentSize / (1024 * 1024));
+        setDownloadedMb(contentSize / (1024 * 1024));
+      } else {
+        setDownloadedMb(totalMb);
       }
 
-      setDownloadedMb(totalMb);
       // Direct URL download allows Internet Download Manager (IDM) or browser DownloadManager to intercept cleanly
       triggerSystemDownload(chosenUrl, targetFilename, `AG File Manager v${targetVersionName}`);
-      onSaveApkToPublicDownloads(targetFilename, contentSize || 2_500_000);
+      onSaveApkToPublicDownloads(targetFilename, contentSize || 4_100_000);
       setPhase('installer_confirm');
     } catch {
       triggerSystemDownload(primaryUrl, targetFilename, `AG File Manager v${targetVersionName}`);
-      onSaveApkToPublicDownloads(targetFilename, 2_500_000);
+      onSaveApkToPublicDownloads(targetFilename, 4_100_000);
       setPhase('installer_confirm');
     }
   };
 
-  const handleOpenInBrowserOrIdm = () => {
+  const handleOpenInBrowserOrIdm = async () => {
     const candidates = getDownloadCandidates();
+    if (!isRunningInAndroidApp() && window.location.protocol !== 'file:') {
+      const { url } = await resolveReachableWebUrl(candidates);
+      openExternalDownloadUrl(url, targetFilename);
+      return;
+    }
     const externalUrl =
       candidates.find((u) => /^https?:\/\//i.test(u)) || candidates[0];
-    triggerSystemDownload(externalUrl, targetFilename, `AG File Manager v${targetVersionName}`);
+    openExternalDownloadUrl(externalUrl, targetFilename);
   };
 
   const handleConfirmInstall = () => {
@@ -423,25 +462,34 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-2.5 pt-1">
+            <div className="flex items-center justify-between gap-2 pt-1">
               <button
                 type="button"
-                onClick={() => {
-                  clearTimers();
-                  onClose();
-                }}
-                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                onClick={handleOpenInBrowserOrIdm}
+                className="min-h-[40px] px-3 py-2 rounded-xl text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
               >
-                Cancel
+                Browser / IDM
               </button>
-              <button
-                type="button"
-                disabled={phase === 'downloading'}
-                onClick={startDownload}
-                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white transition-colors"
-              >
-                Download
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearTimers();
+                    onClose();
+                  }}
+                  className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={phase === 'downloading'}
+                  onClick={startDownload}
+                  className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white transition-colors"
+                >
+                  Download
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -583,21 +631,30 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               Update Failed
             </h2>
             <p className="text-sm text-slate-700 dark:text-slate-300">{errorMessage}</p>
-            <div className="flex items-center justify-end gap-2.5">
+            <div className="flex items-center justify-between gap-2">
               <button
                 type="button"
-                onClick={onClose}
-                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                onClick={handleOpenInBrowserOrIdm}
+                className="min-h-[40px] px-3 py-2 rounded-xl text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40"
               >
-                Close
+                Browser / IDM
               </button>
-              <button
-                type="button"
-                onClick={startDownload}
-                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                Retry
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={startDownload}
+                  className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  Retry
+                </button>
+              </div>
             </div>
           </div>
         )}

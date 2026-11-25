@@ -261,7 +261,11 @@ class UpdateManager(
         fallbackFileName: String
     ) {
         val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        val localPath = localUriStr?.let { Uri.parse(it).path }
+        val localPath = if (localUriStr?.startsWith("file://") == true) {
+            Uri.parse(localUriStr).path
+        } else {
+            null
+        }
         val apkFile = localPath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0L }
             ?: File(publicDownloads, fallbackFileName).takeIf { it.exists() && it.length() > 0L }
 

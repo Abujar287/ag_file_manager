@@ -29,6 +29,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.ArrayDeque
+import java.util.concurrent.ConcurrentHashMap
 
 class MainActivity : Activity() {
 
@@ -127,6 +128,14 @@ class MainActivity : Activity() {
 
         wv.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
         wv.addJavascriptInterface(AndroidBridge(), "AndroidInterface")
+        wv.setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+            try {
+                val fileName = android.webkit.URLUtil.guessFileName(url, contentDisposition, mimeType)
+                AndroidBridge().downloadWithDownloadManager(url, fileName, fileName)
+            } catch (_: Exception) {
+                AndroidBridge().openUrlInBrowser(url)
+            }
+        }
 
         wv.loadUrl("file:///android_asset/dist/index.html")
     }
@@ -232,6 +241,11 @@ class MainActivity : Activity() {
     }
 
     inner class AndroidBridge {
+        private val downloadFileNames = ConcurrentHashMap<Long, String>()
+        @Volatile
+        private var lastSuccessfulDownloadId: Long = -1L
+        @Volatile
+        private var lastDownloadedFileName: String = ""
 
         private fun getInternalRootCanonical(): String {
             return try {
@@ -606,6 +620,24 @@ class MainActivity : Activity() {
         }
 
         @JavascriptInterface
+        fun openUrlInBrowser(url: String): Boolean {
+            return try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                runOnUiThread {
+                    try {
+                        startActivity(intent)
+                    } catch (_: Exception) {
+                    }
+                }
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        @JavascriptInterface
         fun downloadWithDownloadManager(url: String, fileName: String, title: String): String {
             return try {
                 removeExistingDownload(fileName)
@@ -622,16 +654,43 @@ class MainActivity : Activity() {
                     setAllowedOverRoaming(true)
                 }
                 val id = dm.enqueue(req)
+                downloadFileNames[id] = fileName
+                lastDownloadedFileName = fileName
                 id.toString()
             } catch (_: Exception) {
-                runOnUiThread {
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                    } catch (_: Exception) {
-                    }
-                }
+                openUrlInBrowser(url)
                 ""
             }
+        }
+
+        private fun resolveDownloadedApkFile(localUri: String?, expectedFileName: String?): File? {
+            val candidates = mutableListOf<File>()
+            if (!localUri.isNullOrBlank() && localUri.startsWith("file://")) {
+                Uri.parse(localUri).path?.let { candidates.add(File(it)) }
+            }
+            val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (!expectedFileName.isNullOrBlank()) {
+                candidates.add(File(publicDownloads, expectedFileName))
+            }
+            if (lastDownloadedFileName.isNotBlank()) {
+                candidates.add(File(publicDownloads, lastDownloadedFileName))
+            }
+            return candidates.firstOrNull { it.exists() && it.isFile && it.length() > 0L }
+        }
+
+        private fun isValidApkFile(file: File, requireSelfPackage: Boolean = false): Boolean {
+            if (!file.exists() || file.length() < 100_000L) return false
+            val archiveInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageArchiveInfo(
+                    file.absolutePath,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+            }
+            if (archiveInfo == null) return false
+            return !requireSelfPackage || archiveInfo.packageName == BuildConfig.APPLICATION_ID
         }
 
         @JavascriptInterface
@@ -648,7 +707,7 @@ class MainActivity : Activity() {
                         val localUri = c.getString(c.getColumnIndexOrThrow(DownloadManager.COLUMN_LOCAL_URI))
                         val reason = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
 
-                        val statusStr = when (statusInt) {
+                        var statusStr = when (statusInt) {
                             DownloadManager.STATUS_PENDING -> "pending"
                             DownloadManager.STATUS_RUNNING -> "running"
                             DownloadManager.STATUS_PAUSED -> "paused"
@@ -657,13 +716,43 @@ class MainActivity : Activity() {
                             else -> "unknown"
                         }
 
+                        var resolvedPath = ""
+                        var errorReason = if (statusStr == "failed") "Download failed (code $reason)" else ""
+
+                        if (statusStr == "successful") {
+                            val expectedName = downloadFileNames[downloadId]
+                            val resolvedFile = resolveDownloadedApkFile(localUri, expectedName)
+                            if (resolvedFile != null) {
+                                val enforceSelf = resolvedFile.name.startsWith("AG_File_Manager")
+                                if (resolvedFile.name.lowercase().endsWith(".apk") && !isValidApkFile(resolvedFile, enforceSelf)) {
+                                    statusStr = "failed"
+                                    errorReason = "Downloaded file is missing or not a valid APK package."
+                                    resolvedFile.delete()
+                                } else {
+                                    resolvedPath = resolvedFile.canonicalPath
+                                    lastSuccessfulDownloadId = downloadId
+                                }
+                            } else {
+                                val dmUri = dm.getUriForDownloadedFile(downloadId)
+                                if (dmUri != null) {
+                                    lastSuccessfulDownloadId = downloadId
+                                    resolvedPath = expectedName?.let {
+                                        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), it).absolutePath
+                                    } ?: ""
+                                } else {
+                                    statusStr = "failed"
+                                    errorReason = "Downloaded APK not found in Download folder."
+                                }
+                            }
+                        }
+
                         return JSONObject().apply {
                             put("status", statusStr)
                             put("downloadedBytes", downloaded)
                             put("totalBytes", total)
-                            put("localPath", localUri?.let { Uri.parse(it).path } ?: "")
+                            put("localPath", resolvedPath)
                             if (statusStr == "failed") {
-                                put("reason", "Download failed (code $reason)")
+                                put("reason", errorReason)
                             }
                         }.toString()
                     }
@@ -703,19 +792,36 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun installApk(localPath: String): Boolean {
             return try {
-                val apkFile = File(localPath)
-                if (!apkFile.exists() || apkFile.length() == 0L) return false
+                val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val requestedFile = if (localPath.isNotBlank()) File(localPath) else null
+                val apkFile = listOfNotNull(
+                    requestedFile,
+                    requestedFile?.name?.let { File(publicDownloads, it) },
+                    lastDownloadedFileName.takeIf { it.isNotBlank() }?.let { File(publicDownloads, it) }
+                ).firstOrNull { it.exists() && it.isFile && it.length() > 0L }
+
+                if (apkFile != null && !isValidApkFile(apkFile, requireSelfPackage = false)) {
+                    return false
+                }
+
+                val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                val uri: Uri? = when {
+                    apkFile != null -> FileProvider.getUriForFile(
+                        this@MainActivity,
+                        "${BuildConfig.APPLICATION_ID}.fileprovider",
+                        apkFile
+                    )
+                    lastSuccessfulDownloadId > 0L -> dm.getUriForDownloadedFile(lastSuccessfulDownloadId)
+                    else -> null
+                }
+
+                if (uri == null) return false
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
                     requestInstallPermission()
                     return false
                 }
 
-                val uri = FileProvider.getUriForFile(
-                    this@MainActivity,
-                    "${BuildConfig.APPLICATION_ID}.fileprovider",
-                    apkFile
-                )
                 val installIntent = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(uri, "application/vnd.android.package-archive")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
