@@ -132,26 +132,26 @@ export const TopBar: React.FC<TopBarProps> = ({
         ) : (
           <>
             {/* Left: 3-Line Drawer Icon + App Title */}
-            <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+            <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-1">
               <button
                 type="button"
                 onClick={onOpenDrawer}
-                className="min-w-[38px] min-h-[38px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 shrink-0"
+                className="min-w-[34px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center rounded-xl text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 shrink-0"
                 aria-label="Open navigation menu"
               >
-                <Menu size={21} />
+                <Menu size={20} />
               </button>
               <h1 className="text-sm sm:text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100 truncate">
                 AG File Manager
               </h1>
             </div>
 
-            {/* Right: Home Icon Button, W1-W3 Indicators, Search Icon Button, 3-Dot Overflow Menu */}
-            <div className="flex items-center gap-1 shrink-0" ref={menuRef}>
+            {/* Right: Home Icon Button, W1-W3 Indicators with Close Cross, Search Icon Button, 3-Dot Overflow Menu */}
+            <div className="flex items-center gap-0.5 sm:gap-1 shrink-0" ref={menuRef}>
               <button
                 type="button"
                 onClick={onGoHome}
-                className={`min-w-[38px] min-h-[38px] sm:min-w-[42px] sm:min-h-[42px] flex items-center justify-center rounded-xl transition-colors ${
+                className={`min-w-[34px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center rounded-xl transition-colors ${
                   isHomeActive
                     ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -159,7 +159,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 aria-label="Home"
                 title="Home"
               >
-                <Home size={19} />
+                <Home size={18} />
               </button>
 
               {windows.length > 0 && (
@@ -172,21 +172,41 @@ export const TopBar: React.FC<TopBarProps> = ({
                     const isActive = !isHomeActive && win.id === activeWindowId;
                     const label = `W${index + 1}`;
                     return (
-                      <button
+                      <div
                         key={win.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={isActive}
-                        onClick={() => onSelectWindow(win.id)}
-                        title={`${label}: ${win.title}`}
-                        className={`min-w-[30px] sm:min-w-[34px] h-8 px-1.5 sm:px-2 rounded-lg text-xs font-bold tabular-nums transition-colors ${
+                        className={`inline-flex items-center h-7 sm:h-8 rounded-lg border transition-colors shrink-0 ${
                           isActive
-                            ? 'bg-blue-600 text-white shadow-xs'
-                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 border-slate-200/80 dark:border-slate-700/80 text-slate-700 dark:text-slate-200'
                         }`}
                       >
-                        {label}
-                      </button>
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={isActive}
+                          onClick={() => onSelectWindow(win.id)}
+                          title={`${label}: ${win.title}`}
+                          className="h-full pl-1.5 pr-1 text-[11px] sm:text-xs font-bold tabular-nums rounded-l-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                        >
+                          {label}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCloseWindow(win.id);
+                          }}
+                          aria-label={`Close ${label}`}
+                          title={`Close ${label}`}
+                          className={`h-full w-4 sm:w-5 flex items-center justify-center rounded-r-lg transition-colors ${
+                            isActive
+                              ? 'text-white/85 hover:text-white hover:bg-white/20'
+                              : 'text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-200/80 dark:hover:bg-slate-700/80'
+                          }`}
+                        >
+                          <X size={10} strokeWidth={2.75} />
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -195,11 +215,11 @@ export const TopBar: React.FC<TopBarProps> = ({
               <button
                 type="button"
                 onClick={() => onToggleSearch(true)}
-                className="min-w-[38px] min-h-[38px] sm:min-w-[42px] sm:min-h-[42px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                className="min-w-[34px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 aria-label="Search files"
                 title="Search"
               >
-                <Search size={19} />
+                <Search size={18} />
               </button>
 
               <div className="relative">

@@ -202,7 +202,7 @@ export default function App() {
 
   const [windows, setWindows] = useState<TabWindow[]>([]);
   const [activeWindowId, setActiveWindowId] = useState<string | null>(null);
-  const [utilityScreen, setUtilityScreen] = useState<'settings' | 'about' | null>(null);
+  const [utilityScreen, setUtilityScreen] = useState<ActiveScreen | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -323,7 +323,7 @@ export default function App() {
     : null;
   const isHomeActive = !utilityScreen && !activeWindow;
   const activeScreen: ActiveScreen = utilityScreen
-    ? { type: utilityScreen }
+    ? utilityScreen
     : activeWindow
       ? activeWindow.screen
       : { type: 'home' };
@@ -729,8 +729,11 @@ export default function App() {
       return;
     }
 
-    if (screen.type === 'settings' || screen.type === 'about') {
-      setUtilityScreen(screen.type);
+    // Categories (including Recycle Bin, Images, Videos, Apps, etc.), Analyzer tools,
+    // Settings, and About are always accessible even when all 3 folder windows (W1-W3) are open.
+    if (screen.type !== 'folder') {
+      setUtilityScreen(screen);
+      syncScreenSideEffects(screen);
       return;
     }
 
@@ -742,7 +745,7 @@ export default function App() {
       if (windowsRef.current.length >= MAX_WINDOWS) {
         setUtilityScreen(null);
         setActiveWindowId(null);
-        showToast(`Maximum ${MAX_WINDOWS} windows limit reached. Close a window to open another.`);
+        showToast(`Maximum ${MAX_WINDOWS} folder windows limit reached. Close a window to open another.`);
         return;
       }
 
@@ -1065,7 +1068,25 @@ export default function App() {
 
   const handleOpenFile = useCallback((file: FileNode, contextList?: FileNode[]) => {
     const applyContext = () => {
-      setViewingContextFiles(contextList && contextList.length > 0 ? contextList : []);
+      if (contextList && contextList.length > 0) {
+        setViewingContextFiles(contextList);
+        return;
+      }
+      const allFiles = filesRef.current;
+      const sameParentMedia = allFiles.filter(
+        (n) => !n.trashed && n.parentId === file.parentId && (n.kind === 'image' || n.kind === 'video')
+      );
+      if (file.kind === 'video') {
+        const sameParentVideos = sameParentMedia.filter((n) => n.kind === 'video');
+        if (sameParentVideos.length > 1) {
+          setViewingContextFiles(sameParentVideos);
+          return;
+        }
+        const allVideos = allFiles.filter((n) => !n.trashed && n.kind === 'video');
+        setViewingContextFiles(allVideos.length > 1 ? allVideos : sameParentMedia);
+        return;
+      }
+      setViewingContextFiles(sameParentMedia);
     };
     const bridge = getNativeBridge();
     if (bridge && file.realPath) {
@@ -2015,9 +2036,14 @@ export default function App() {
   );
   const handleSelectAnalyzerTabMemo = useCallback(
     (tool: AnalyzerToolType) => {
+      const nextScreen: ActiveScreen = { type: 'analyzer', tool };
+      if (utilityScreenRef.current?.type === 'analyzer') {
+        setUtilityScreen(nextScreen);
+        syncScreenSideEffects(nextScreen);
+        return;
+      }
       const targetWinId = activeWindowIdRef.current;
       if (!targetWinId) return;
-      const nextScreen: ActiveScreen = { type: 'analyzer', tool };
       const title = getScreenTitle(nextScreen, filesRef.current);
       setWindows((prev) =>
         prev.map((w) =>

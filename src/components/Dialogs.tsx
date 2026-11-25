@@ -9,10 +9,17 @@ import {
   ExternalLink,
   File as FileGlyph,
   FileText,
+  Maximize2,
+  Minimize2,
   Music,
+  Pause,
+  Play,
   RotateCcw,
+  RotateCw,
   Share2,
   Trash2,
+  Volume2,
+  VolumeX,
   WrapText,
   X,
   ZoomIn,
@@ -322,6 +329,19 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
   const pinchBaseZoomRef = useRef<number>(1);
   const lastTapRef = useRef<number>(0);
 
+  // Video player state & refs
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoStageContainerRef = useRef<HTMLDivElement>(null);
+  const activeVideoThumbRef = useRef<HTMLButtonElement | null>(null);
+  const [videoPlaying, setVideoPlaying] = useState(true);
+  const [videoMuted, setVideoMuted] = useState(false);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [videoSeeking, setVideoSeeking] = useState(false);
+  const [videoSeekPreview, setVideoSeekPreview] = useState<number | null>(null);
+  const [videoPlaybackRate, setVideoPlaybackRate] = useState(1);
+  const [videoFullscreen, setVideoFullscreen] = useState(false);
+
   // Built-in PDF reader state
   const [pdfPageCount, setPdfPageCount] = useState(0);
   const [pdfPageIndex, setPdfPageIndex] = useState(0);
@@ -341,35 +361,44 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
     return list;
   }, [file, galleryFiles]);
 
-  const currentMediaIndex = useMemo(() => {
-    if (!file) return -1;
-    return mediaSiblings.findIndex((n) => n.id === file.id);
+  const videoSiblings = useMemo(() => {
+    if (!file || file.kind !== 'video') return [];
+    const vids = mediaSiblings.filter((n) => n.kind === 'video');
+    if (vids.length > 1) return vids;
+    return mediaSiblings;
   }, [file, mediaSiblings]);
 
+  const activeNavList = file?.kind === 'video' ? videoSiblings : mediaSiblings;
+
+  const currentMediaIndex = useMemo(() => {
+    if (!file) return -1;
+    return activeNavList.findIndex((n) => n.id === file.id);
+  }, [file, activeNavList]);
+
   const goPrevMedia = () => {
-    if (!onSelectFile || mediaSiblings.length <= 1 || currentMediaIndex <= 0) return;
-    onSelectFile(mediaSiblings[currentMediaIndex - 1]);
+    if (!onSelectFile || activeNavList.length <= 1 || currentMediaIndex <= 0) return;
+    onSelectFile(activeNavList[currentMediaIndex - 1]);
   };
 
   const goNextMedia = () => {
     if (
       !onSelectFile ||
-      mediaSiblings.length <= 1 ||
+      activeNavList.length <= 1 ||
       currentMediaIndex < 0 ||
-      currentMediaIndex >= mediaSiblings.length - 1
+      currentMediaIndex >= activeNavList.length - 1
     ) {
       return;
     }
-    onSelectFile(mediaSiblings[currentMediaIndex + 1]);
+    onSelectFile(activeNavList[currentMediaIndex + 1]);
   };
 
   const visibleFilmstrip = useMemo(() => {
-    if (mediaSiblings.length <= 1) return [];
+    if (activeNavList.length <= 1) return [];
     const idx = currentMediaIndex >= 0 ? currentMediaIndex : 0;
-    const start = Math.max(0, idx - 8);
-    const end = Math.min(mediaSiblings.length, idx + 9);
-    return mediaSiblings.slice(start, end);
-  }, [mediaSiblings, currentMediaIndex]);
+    const start = Math.max(0, idx - 6);
+    const end = Math.min(activeNavList.length, idx + 18);
+    return activeNavList.slice(start, end);
+  }, [activeNavList, currentMediaIndex]);
 
   useEffect(() => {
     setTextDraft(file?.content || '');
@@ -381,11 +410,34 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
       swipeStageRef.current.style.transform = '';
     }
     setShowOverlay(true);
+    setVideoPlaying(true);
+    setVideoCurrentTime(0);
+    setVideoDuration(0);
+    setVideoSeeking(false);
+    setVideoSeekPreview(null);
     setPdfPageCount(0);
     setPdfPageIndex(0);
     setPdfPageDataUrl(null);
     setPdfZoom(1);
   }, [file]);
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setVideoFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  useEffect(() => {
+    if (file?.kind === 'video' && activeVideoThumbRef.current) {
+      activeVideoThumbRef.current.scrollIntoView({
+        behavior: 'smooth',
+        inline: 'center',
+        block: 'nearest',
+      });
+    }
+  }, [file?.id, file?.kind]);
 
   // Silently preload adjacent images for instant zero-flicker gallery swipes
   useEffect(() => {
@@ -585,10 +637,426 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
   const lines = textDraft.split('\n');
   const extLabel = getExtension(file.name).toUpperCase() || file.kind.toUpperCase();
 
-  // Immersive Fullscreen Gallery Viewer for Images & Videos
-  if ((isImage || isVideo) && mediaSrc) {
+  const formatVideoTime = (secs: number) => {
+    if (!Number.isFinite(secs) || secs < 0) return '0:00';
+    const whole = Math.floor(secs);
+    const hrs = Math.floor(whole / 3600);
+    const mins = Math.floor((whole % 3600) / 60);
+    const rem = whole % 60;
+    if (hrs > 0) {
+      return `${hrs}:${String(mins).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+    }
+    return `${mins}:${String(rem).padStart(2, '0')}`;
+  };
+
+  const toggleVideoPlayPause = () => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    if (vid.paused || vid.ended) {
+      vid.play().catch(() => {});
+    } else {
+      vid.pause();
+    }
+  };
+
+  const seekVideoTo = (targetSec: number) => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    const maxSec = Number.isFinite(vid.duration) && vid.duration > 0 ? vid.duration : videoDuration;
+    const clamped = Math.max(0, Math.min(maxSec || 0, targetSec));
+    vid.currentTime = clamped;
+    setVideoCurrentTime(clamped);
+  };
+
+  const skipVideoBy = (deltaSec: number) => {
+    const vid = videoRef.current;
+    const base = vid ? vid.currentTime : videoCurrentTime;
+    seekVideoTo(base + deltaSec);
+  };
+
+  const toggleVideoMute = () => {
+    const vid = videoRef.current;
+    if (!vid) return;
+    vid.muted = !vid.muted;
+    setVideoMuted(vid.muted);
+  };
+
+  const cycleVideoPlaybackRate = () => {
+    const rates = [0.5, 1, 1.25, 1.5, 2];
+    const idx = rates.indexOf(videoPlaybackRate);
+    const nextRate = rates[(idx + 1) % rates.length];
+    setVideoPlaybackRate(nextRate);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = nextRate;
+    }
+  };
+
+  const toggleVideoFullscreen = () => {
+    const el = videoStageContainerRef.current || videoRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    } else {
+      el.requestFullscreen?.().catch(() => {
+        videoRef.current?.requestFullscreen?.().catch(() => {});
+      });
+    }
+  };
+
+  // Dedicated Video Player with Non-Overlapping Seek Controls & Bottom Next-Video Thumbnails
+  if (isVideo && mediaSrc) {
     const hasPrev = currentMediaIndex > 0;
-    const hasNext = currentMediaIndex >= 0 && currentMediaIndex < mediaSiblings.length - 1;
+    const hasNext = currentMediaIndex >= 0 && currentMediaIndex < activeNavList.length - 1;
+    const displayTime = videoSeeking && videoSeekPreview !== null ? videoSeekPreview : videoCurrentTime;
+    const effectiveDuration = videoDuration > 0 ? videoDuration : 0;
+    const progressPct =
+      effectiveDuration > 0 ? Math.min(100, Math.max(0, (displayTime / effectiveDuration) * 100)) : 0;
+
+    return (
+      <div
+        ref={videoStageContainerRef}
+        className="fixed inset-0 z-50 bg-black text-white flex flex-col select-none"
+      >
+        {/* Top Compact Video Header */}
+        <div className="shrink-0 bg-zinc-950/95 border-b border-white/10 px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white shrink-0"
+              aria-label="Back"
+            >
+              <ArrowLeft size={19} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm sm:text-base font-semibold text-white truncate">
+                {file.name}
+              </h2>
+              <p className="text-[11px] text-white/70 tabular-nums truncate">
+                {activeNavList.length > 1 && currentMediaIndex >= 0
+                  ? `${currentMediaIndex + 1} / ${activeNavList.length} · `
+                  : ''}
+                {formatBytes(file.size)} · {formatDateTime(file.modifiedAt)}
+              </p>
+            </div>
+          </div>
+
+          {onOpenExternal && (
+            <button
+              type="button"
+              onClick={() => onOpenExternal(file)}
+              className="px-3 py-1.5 rounded-full text-xs font-medium bg-white/12 hover:bg-white/20 text-white flex items-center gap-1.5 shrink-0"
+              title="Open with external player"
+            >
+              <ExternalLink size={14} />
+              <span className="hidden sm:inline">Open with</span>
+            </button>
+          )}
+        </div>
+
+        {/* Upper Video Stage — sized to leave generous room below for Seek Controls & Next Video Thumbnails */}
+        <div
+          className="relative flex-1 min-h-[180px] flex items-center justify-center bg-black px-2 py-2 overflow-hidden"
+          onClick={toggleVideoPlayPause}
+        >
+          <video
+            ref={videoRef}
+            key={file.id}
+            src={mediaSrc}
+            preload="metadata"
+            autoPlay
+            playsInline
+            muted={videoMuted}
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget;
+              v.playbackRate = videoPlaybackRate;
+              if (Number.isFinite(v.duration)) setVideoDuration(v.duration);
+            }}
+            onDurationChange={(e) => {
+              const d = e.currentTarget.duration;
+              if (Number.isFinite(d) && d > 0) setVideoDuration(d);
+            }}
+            onTimeUpdate={(e) => {
+              if (!videoSeeking) {
+                setVideoCurrentTime(e.currentTarget.currentTime);
+              }
+            }}
+            onPlay={() => setVideoPlaying(true)}
+            onPause={() => setVideoPlaying(false)}
+            onEnded={() => setVideoPlaying(false)}
+            className="max-w-full max-h-full w-auto h-auto rounded-lg outline-none shadow-2xl object-contain"
+          />
+
+          {/* Center Tap-to-Play Overlay when Paused */}
+          {!videoPlaying && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleVideoPlayPause();
+              }}
+              aria-label="Play video"
+              className="absolute inset-0 m-auto w-14 h-14 rounded-full bg-black/70 hover:bg-blue-600 border border-white/25 text-white flex items-center justify-center shadow-2xl transition-colors"
+            >
+              <Play size={26} fill="currentColor" className="ml-0.5" />
+            </button>
+          )}
+
+          {/* Previous / Next Video Arrows */}
+          {hasPrev && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                goPrevMedia();
+              }}
+              className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-black/60 hover:bg-black/85 border border-white/15 text-white flex items-center justify-center shadow-lg"
+              aria-label="Previous video"
+            >
+              <ChevronLeft size={20} />
+            </button>
+          )}
+          {hasNext && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                goNextMedia();
+              }}
+              className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-black/60 hover:bg-black/85 border border-white/15 text-white flex items-center justify-center shadow-lg"
+              aria-label="Next video"
+            >
+              <ChevronRight size={20} />
+            </button>
+          )}
+        </div>
+
+        {/* Dedicated Seek Bar, Playback Controls, Next Video Thumbnails & Actions (never overlapping video) */}
+        <div
+          className="shrink-0 bg-zinc-950 border-t border-white/10 px-3 sm:px-5 pt-2.5 pb-2.5 space-y-2.5"
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+        >
+          {/* Interactive Timeline / Seek Slider */}
+          <div className="space-y-1">
+            <div className="flex items-center gap-2.5">
+              <span className="text-[11px] font-mono tabular-nums text-white/85 min-w-[40px]">
+                {formatVideoTime(displayTime)}
+              </span>
+              <div className="relative flex-1 flex items-center h-6">
+                <div className="w-full h-1.5 rounded-full bg-white/20 overflow-hidden pointer-events-none">
+                  <div
+                    className="h-full bg-blue-500 rounded-full"
+                    style={{ width: `${progressPct}%` }}
+                  />
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={effectiveDuration > 0 ? effectiveDuration : 100}
+                  step={0.1}
+                  value={effectiveDuration > 0 ? Math.min(displayTime, effectiveDuration) : 0}
+                  disabled={effectiveDuration <= 0}
+                  onPointerDown={() => setVideoSeeking(true)}
+                  onTouchStart={(e) => {
+                    e.stopPropagation();
+                    setVideoSeeking(true);
+                  }}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setVideoSeeking(true);
+                    setVideoSeekPreview(val);
+                    if (videoRef.current && effectiveDuration > 0) {
+                      videoRef.current.currentTime = val;
+                    }
+                  }}
+                  onPointerUp={(e) => {
+                    const val = parseFloat((e.target as HTMLInputElement).value);
+                    if (effectiveDuration > 0) seekVideoTo(val);
+                    setVideoSeeking(false);
+                    setVideoSeekPreview(null);
+                  }}
+                  onPointerCancel={() => {
+                    setVideoSeeking(false);
+                    setVideoSeekPreview(null);
+                  }}
+                  onTouchEnd={(e) => {
+                    const val = parseFloat((e.target as HTMLInputElement).value);
+                    if (effectiveDuration > 0) seekVideoTo(val);
+                    setVideoSeeking(false);
+                    setVideoSeekPreview(null);
+                  }}
+                  onTouchCancel={() => {
+                    setVideoSeeking(false);
+                    setVideoSeekPreview(null);
+                  }}
+                  aria-label="Seek video timeline"
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <div
+                  className="w-3.5 h-3.5 rounded-full bg-white border-2 border-blue-500 shadow-md pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
+                  style={{ left: `${progressPct}%` }}
+                />
+              </div>
+              <span className="text-[11px] font-mono tabular-nums text-white/70 min-w-[40px] text-right">
+                {formatVideoTime(effectiveDuration)}
+              </span>
+            </div>
+
+            {/* Playback Buttons */}
+            <div className="flex items-center justify-between gap-2 pt-0.5">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={toggleVideoMute}
+                  className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white/90 flex items-center justify-center"
+                  aria-label={videoMuted ? 'Unmute' : 'Mute'}
+                  title={videoMuted ? 'Unmute' : 'Mute'}
+                >
+                  {videoMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                </button>
+                <button
+                  type="button"
+                  onClick={cycleVideoPlaybackRate}
+                  className="h-8 px-2 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-bold tabular-nums text-white/90"
+                  aria-label="Playback speed"
+                  title="Playback speed"
+                >
+                  {videoPlaybackRate}x
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => skipVideoBy(-10)}
+                  className="h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center gap-1 text-xs font-semibold"
+                  aria-label="Rewind 10 seconds"
+                >
+                  <RotateCcw size={14} />
+                  <span>10s</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleVideoPlayPause}
+                  className="w-10 h-9 rounded-xl bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center shadow-sm"
+                  aria-label={videoPlaying ? 'Pause' : 'Play'}
+                >
+                  {videoPlaying ? <Pause size={18} /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => skipVideoBy(10)}
+                  className="h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center gap-1 text-xs font-semibold"
+                  aria-label="Forward 10 seconds"
+                >
+                  <span>10s</span>
+                  <RotateCw size={14} />
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={toggleVideoFullscreen}
+                className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white/90 flex items-center justify-center"
+                aria-label={videoFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                title={videoFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+              >
+                {videoFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
+            </div>
+          </div>
+
+          {/* Next / Sibling Video Thumbnails Strip */}
+          {visibleFilmstrip.length > 1 && onSelectFile && (
+            <div className="space-y-1.5 pt-1 border-t border-white/10">
+              <div className="flex items-center justify-between text-[11px] text-white/65 px-0.5">
+                <span className="font-semibold text-white/85">Next Videos</span>
+                <span className="tabular-nums">
+                  {currentMediaIndex + 1} / {activeNavList.length}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                {visibleFilmstrip.map((item) => {
+                  const isActive = item.id === file.id;
+                  return (
+                    <button
+                      key={item.id}
+                      ref={isActive ? activeVideoThumbRef : undefined}
+                      type="button"
+                      onClick={() => onSelectFile(item)}
+                      className={`w-24 h-14 rounded-lg overflow-hidden shrink-0 relative border-2 transition-all bg-zinc-900 ${
+                        isActive
+                          ? 'border-blue-500 ring-2 ring-blue-500/35 opacity-100'
+                          : 'border-white/15 opacity-75 hover:opacity-100'
+                      }`}
+                      title={item.name}
+                    >
+                      <FileIcon node={item} showThumbnails={true} size="fill" />
+                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-1 py-0.5 text-left">
+                        <div className="text-[9px] font-medium text-white truncate">
+                          {item.name}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Action Bar */}
+          <div className="flex items-center justify-around max-w-md mx-auto text-[11px] font-medium pt-0.5 border-t border-white/10">
+            {onShareFile && (
+              <button
+                type="button"
+                onClick={() => onShareFile(file)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/90 hover:bg-white/10"
+              >
+                <Share2 size={15} />
+                <span>Share</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onDownloadFile(file)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/90 hover:bg-white/10"
+            >
+              <Download size={15} />
+              <span>Export</span>
+            </button>
+            {onOpenExternal && (
+              <button
+                type="button"
+                onClick={() => onOpenExternal(file)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/90 hover:bg-white/10"
+              >
+                <ExternalLink size={15} />
+                <span>Open</span>
+              </button>
+            )}
+            {onDeleteFile && (
+              <button
+                type="button"
+                onClick={() => onDeleteFile(file)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-rose-400 hover:bg-rose-500/20"
+              >
+                <Trash2 size={15} />
+                <span>Delete</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Immersive Fullscreen Gallery Viewer for Images
+  if (isImage && mediaSrc) {
+    const hasPrev = currentMediaIndex > 0;
+    const hasNext = currentMediaIndex >= 0 && currentMediaIndex < activeNavList.length - 1;
 
     return (
       <div className="fixed inset-0 z-50 bg-black text-white flex flex-col select-none">
@@ -612,8 +1080,8 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
                 {file.name}
               </h2>
               <p className="text-[11px] text-white/75 tabular-nums truncate">
-                {mediaSiblings.length > 1 && currentMediaIndex >= 0
-                  ? `${currentMediaIndex + 1} / ${mediaSiblings.length} · `
+                {activeNavList.length > 1 && currentMediaIndex >= 0
+                  ? `${currentMediaIndex + 1} / ${activeNavList.length} · `
                   : ''}
                 {formatBytes(file.size)} · {formatDateTime(file.modifiedAt)}
               </p>
@@ -621,48 +1089,46 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {isImage && (
-              <div className="hidden sm:flex items-center gap-1 bg-white/10 rounded-full px-2 py-1 mr-1">
+            <div className="hidden sm:flex items-center gap-1 bg-white/10 rounded-full px-2 py-1 mr-1">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = clampZoom(zoom - 0.5);
+                  setZoom(next);
+                  if (next === 1) setPan({ x: 0, y: 0 });
+                }}
+                disabled={zoom <= 1}
+                className="p-1 rounded-full hover:bg-white/15 disabled:opacity-40"
+                aria-label="Zoom out"
+              >
+                <ZoomOut size={15} />
+              </button>
+              <span className="text-[11px] font-mono tabular-nums min-w-[42px] text-center">
+                {Math.round(zoom * 100)}%
+              </span>
+              <button
+                type="button"
+                onClick={() => setZoom(clampZoom(zoom + 0.5))}
+                disabled={zoom >= 5}
+                className="p-1 rounded-full hover:bg-white/15 disabled:opacity-40"
+                aria-label="Zoom in"
+              >
+                <ZoomIn size={15} />
+              </button>
+              {zoom > 1 && (
                 <button
                   type="button"
                   onClick={() => {
-                    const next = clampZoom(zoom - 0.5);
-                    setZoom(next);
-                    if (next === 1) setPan({ x: 0, y: 0 });
+                    setZoom(1);
+                    setPan({ x: 0, y: 0 });
                   }}
-                  disabled={zoom <= 1}
-                  className="p-1 rounded-full hover:bg-white/15 disabled:opacity-40"
-                  aria-label="Zoom out"
+                  className="p-1 rounded-full hover:bg-white/15"
+                  aria-label="Reset zoom"
                 >
-                  <ZoomOut size={15} />
+                  <RotateCcw size={14} />
                 </button>
-                <span className="text-[11px] font-mono tabular-nums min-w-[42px] text-center">
-                  {Math.round(zoom * 100)}%
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setZoom(clampZoom(zoom + 0.5))}
-                  disabled={zoom >= 5}
-                  className="p-1 rounded-full hover:bg-white/15 disabled:opacity-40"
-                  aria-label="Zoom in"
-                >
-                  <ZoomIn size={15} />
-                </button>
-                {zoom > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setZoom(1);
-                      setPan({ x: 0, y: 0 });
-                    }}
-                    className="p-1 rounded-full hover:bg-white/15"
-                    aria-label="Reset zoom"
-                  >
-                    <RotateCcw size={14} />
-                  </button>
-                )}
-              </div>
-            )}
+              )}
+            </div>
             {onOpenExternal && (
               <button
                 type="button"
@@ -677,90 +1143,71 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
           </div>
         </div>
 
-        {/* Main Stage */}
+        {/* Main Image Stage */}
         <div
           ref={swipeStageRef}
           className="relative flex-1 flex items-center justify-center overflow-hidden touch-none will-change-transform"
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          onClick={() => {
-            if (isImage) setShowOverlay((v) => !v);
-          }}
+          onClick={() => setShowOverlay((v) => !v)}
         >
-          {isImage ? (
-            <div
-              className="w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
-              onWheel={(e) => {
-                e.preventDefault();
-                const next = clampZoom(zoom + (e.deltaY < 0 ? 0.25 : -0.25));
-                liveTransformRef.current = {
-                  x: next === 1 ? 0 : pan.x,
-                  y: next === 1 ? 0 : pan.y,
-                  zoom: next,
-                };
-                setZoom(next);
-                if (next === 1) setPan({ x: 0, y: 0 });
+          <div
+            className="w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
+            onWheel={(e) => {
+              e.preventDefault();
+              const next = clampZoom(zoom + (e.deltaY < 0 ? 0.25 : -0.25));
+              liveTransformRef.current = {
+                x: next === 1 ? 0 : pan.x,
+                y: next === 1 ? 0 : pan.y,
+                zoom: next,
+              };
+              setZoom(next);
+              if (next === 1) setPan({ x: 0, y: 0 });
+            }}
+            onMouseDown={(e) => {
+              if (zoom <= 1) return;
+              dragRef.current = {
+                active: true,
+                startX: e.clientX,
+                startY: e.clientY,
+                origX: pan.x,
+                origY: pan.y,
+              };
+            }}
+            onMouseMove={(e) => {
+              if (!dragRef.current.active || zoom <= 1) return;
+              const nx = dragRef.current.origX + (e.clientX - dragRef.current.startX);
+              const ny = dragRef.current.origY + (e.clientY - dragRef.current.startY);
+              applyDirectImageTransform(nx, ny, zoom);
+            }}
+            onMouseUp={() => {
+              if (dragRef.current.active) {
+                dragRef.current.active = false;
+                setPan({ x: liveTransformRef.current.x, y: liveTransformRef.current.y });
+              }
+            }}
+            onMouseLeave={() => {
+              if (dragRef.current.active) {
+                dragRef.current.active = false;
+                setPan({ x: liveTransformRef.current.x, y: liveTransformRef.current.y });
+              }
+            }}
+          >
+            <img
+              ref={imgElRef}
+              src={mediaSrc}
+              alt={file.name}
+              draggable={false}
+              decoding="async"
+              referrerPolicy="no-referrer"
+              style={{
+                transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
+                transition: 'transform 120ms ease-out',
               }}
-              onMouseDown={(e) => {
-                if (zoom <= 1) return;
-                dragRef.current = {
-                  active: true,
-                  startX: e.clientX,
-                  startY: e.clientY,
-                  origX: pan.x,
-                  origY: pan.y,
-                };
-              }}
-              onMouseMove={(e) => {
-                if (!dragRef.current.active || zoom <= 1) return;
-                const nx = dragRef.current.origX + (e.clientX - dragRef.current.startX);
-                const ny = dragRef.current.origY + (e.clientY - dragRef.current.startY);
-                applyDirectImageTransform(nx, ny, zoom);
-              }}
-              onMouseUp={() => {
-                if (dragRef.current.active) {
-                  dragRef.current.active = false;
-                  setPan({ x: liveTransformRef.current.x, y: liveTransformRef.current.y });
-                }
-              }}
-              onMouseLeave={() => {
-                if (dragRef.current.active) {
-                  dragRef.current.active = false;
-                  setPan({ x: liveTransformRef.current.x, y: liveTransformRef.current.y });
-                }
-              }}
-            >
-              <img
-                ref={imgElRef}
-                src={mediaSrc}
-                alt={file.name}
-                draggable={false}
-                decoding="async"
-                referrerPolicy="no-referrer"
-                style={{
-                  transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
-                  transition: 'transform 120ms ease-out',
-                }}
-                className="max-w-full max-h-full object-contain pointer-events-none will-change-transform"
-              />
-            </div>
-          ) : (
-            <div
-              className="w-full h-full flex items-center justify-center p-2 sm:p-6"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <video
-                key={file.id}
-                src={mediaSrc}
-                preload="metadata"
-                controls
-                autoPlay
-                playsInline
-                className="max-w-full max-h-[82vh] rounded-xl outline-none shadow-2xl"
-              />
-            </div>
-          )}
+              className="max-w-full max-h-full object-contain pointer-events-none will-change-transform"
+            />
+          </div>
 
           {/* Previous / Next Navigation Arrows */}
           {showOverlay && hasPrev && (
