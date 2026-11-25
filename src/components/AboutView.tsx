@@ -1,17 +1,15 @@
-import { ArrowLeft, DownloadCloud } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { AppSettings } from '../types/fileManager';
 import { AppLogo } from './AppLogo';
 
 interface AboutViewProps {
   settings: AppSettings;
   onBackHome: () => void;
-  onCheckUpdate: () => void;
 }
 
 export const AboutView: React.FC<AboutViewProps> = ({
   settings,
   onBackHome,
-  onCheckUpdate,
 }) => {
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4 space-y-6">
@@ -57,17 +55,6 @@ export const AboutView: React.FC<AboutViewProps> = ({
               {settings.currentVersionName} (Build {settings.currentVersionCode})
             </span>
           </div>
-        </div>
-
-        <div className="pt-1">
-          <button
-            type="button"
-            onClick={onCheckUpdate}
-            className="min-h-[42px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
-          >
-            <DownloadCloud size={17} />
-            <span>Check Update</span>
-          </button>
         </div>
       </div>
     </div>

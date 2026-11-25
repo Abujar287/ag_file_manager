@@ -16,6 +16,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.pdf.PdfRenderer
 import android.media.ExifInterface
+import android.media.MediaScannerConnection
 import android.media.ThumbnailUtils
 import android.net.Uri
 import android.os.Build
@@ -55,6 +56,8 @@ class MainActivity : Activity() {
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var lastPermissionState: Boolean = false
     private val ioExecutor = Executors.newFixedThreadPool(3)
+    private val pendingUninstallQueue = ArrayDeque<String>()
+    private var isUninstallInProgress = false
 
     companion object {
         private const val REQ_INSTALL_PACKAGES = 1001
@@ -62,6 +65,7 @@ class MainActivity : Activity() {
         private const val REQ_MANAGE_STORAGE = 1003
         private const val REQ_MEDIA_PERMISSIONS = 1004
         private const val REQ_FILE_CHOOSER = 1005
+        private const val REQ_UNINSTALL_APP = 1006
         private const val REMOTE_MANIFEST_URL =
             "https://raw.githubusercontent.com/Abujar287/ag_file_manager/main/version.json"
     }
@@ -246,6 +250,29 @@ class MainActivity : Activity() {
                     WebChromeClient.FileChooserParams.parseResult(resultCode, data)
                 )
                 filePathCallback = null
+            }
+            REQ_UNINSTALL_APP -> {
+                isUninstallInProgress = false
+                dispatchWebEvent("android_apps_changed", JSONObject())
+                launchNextUninstall()
+            }
+        }
+    }
+
+    private fun launchNextUninstall() {
+        runOnUiThread {
+            if (isUninstallInProgress) return@runOnUiThread
+            val nextPkg = pendingUninstallQueue.pollFirst() ?: return@runOnUiThread
+            try {
+                isUninstallInProgress = true
+                val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:$nextPkg")).apply {
+                    putExtra(Intent.EXTRA_RETURN_RESULT, true)
+                }
+                @Suppress("DEPRECATION")
+                startActivityForResult(intent, REQ_UNINSTALL_APP)
+            } catch (_: Exception) {
+                isUninstallInProgress = false
+                launchNextUninstall()
             }
         }
     }
@@ -691,6 +718,93 @@ class MainActivity : Activity() {
             }
         }
 
+        private fun buildEmptyFoldersJsonArray(): JSONArray {
+            val roots = mutableListOf(Environment.getExternalStorageDirectory())
+            StorageAnalyzer.getExternalSdCard(this@MainActivity)?.rootPath?.let { roots.add(it) }
+            val internalRoot = getInternalRootCanonical()
+            val sdRoot = getSdRootCanonical()
+            val jsonArr = JSONArray()
+            val seen = HashSet<String>()
+
+            for (root in roots) {
+                if (!root.exists() || !root.canRead()) continue
+                val empties = StorageAnalyzer.findEmptyFolders(root)
+                for (dir in empties) {
+                    val canon = try {
+                        dir.canonicalPath
+                    } catch (_: Exception) {
+                        dir.absolutePath
+                    }
+                    if (!seen.add(canon)) continue
+                    jsonArr.put(
+                        fileToJson(
+                            file = dir,
+                            forcedParentId = null,
+                            internalRoot = internalRoot,
+                            sdRoot = sdRoot,
+                            allowThumbCreate = false
+                        )
+                    )
+                }
+            }
+            return jsonArr
+        }
+
+        @JavascriptInterface
+        fun findEmptyFolders(): String {
+            return try {
+                buildEmptyFoldersJsonArray().toString()
+            } catch (_: Exception) {
+                "[]"
+            }
+        }
+
+        @JavascriptInterface
+        fun findEmptyFoldersAsync(requestId: String) {
+            ioExecutor.execute {
+                val folders = try {
+                    buildEmptyFoldersJsonArray()
+                } catch (_: Exception) {
+                    JSONArray()
+                }
+                dispatchWebEvent("android_empty_folders_result", JSONObject().apply {
+                    put("requestId", requestId)
+                    put("folders", folders)
+                })
+            }
+        }
+
+        @JavascriptInterface
+        fun deleteEmptyFolders(pathsJson: String): Boolean {
+            return try {
+                val arr = JSONArray(pathsJson)
+                var allOk = true
+                val deletedPaths = ArrayList<String>()
+                for (i in 0 until arr.length()) {
+                    val dir = File(arr.getString(i))
+                    if (!dir.exists()) continue
+                    if (dir.isDirectory) {
+                        val children = dir.listFiles()
+                        if (children != null && children.isEmpty()) {
+                            if (dir.delete()) {
+                                deletedPaths.add(dir.absolutePath)
+                            } else {
+                                allOk = false
+                            }
+                        } else {
+                            allOk = false
+                        }
+                    }
+                }
+                if (deletedPaths.isNotEmpty()) {
+                    notifyMediaScanner(deletedPaths)
+                }
+                allOk
+            } catch (_: Exception) {
+                false
+            }
+        }
+
         private fun getOrSaveAppIconUri(packageName: String, appInfo: ApplicationInfo): String? {
             return try {
                 val iconDir = File(cacheDir, "app_icons")
@@ -822,15 +936,31 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun uninstallApp(packageName: String): Boolean {
             return try {
-                val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:$packageName")).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                runOnUiThread {
-                    try {
-                        startActivity(intent)
-                    } catch (_: Exception) {
+                pendingUninstallQueue.clear()
+                isUninstallInProgress = false
+                pendingUninstallQueue.addLast(packageName)
+                launchNextUninstall()
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+        @JavascriptInterface
+        fun uninstallApps(packagesJson: String): Boolean {
+            return try {
+                val arr = JSONArray(packagesJson)
+                if (arr.length() == 0) return false
+                pendingUninstallQueue.clear()
+                isUninstallInProgress = false
+                for (i in 0 until arr.length()) {
+                    val pkg = arr.optString(i, "")
+                    if (pkg.isNotBlank()) {
+                        pendingUninstallQueue.addLast(pkg)
                     }
                 }
+                if (pendingUninstallQueue.isEmpty()) return false
+                launchNextUninstall()
                 true
             } catch (_: Exception) {
                 false
@@ -1025,27 +1155,296 @@ class MainActivity : Activity() {
             }
         }
 
+        private fun notifyMediaScanner(paths: List<String>) {
+            if (paths.isEmpty()) return
+            try {
+                MediaScannerConnection.scanFile(
+                    this@MainActivity,
+                    paths.toTypedArray(),
+                    null,
+                    null
+                )
+            } catch (_: Exception) {
+            }
+        }
+
+        private fun getTrashRootDir(): File {
+            val dir = File(Environment.getExternalStorageDirectory(), ".AGFileManagerTrash")
+            if (!dir.exists()) dir.mkdirs()
+            val nomedia = File(dir, ".nomedia")
+            if (!nomedia.exists()) {
+                try {
+                    nomedia.createNewFile()
+                } catch (_: Exception) {
+                }
+            }
+            return dir
+        }
+
+        private fun computeSizeRecursive(file: File): Long {
+            if (!file.exists()) return 0L
+            if (file.isFile) return file.length()
+            var total = 0L
+            val stack = ArrayDeque<File>()
+            stack.add(file)
+            while (stack.isNotEmpty()) {
+                val curr = stack.removeLast()
+                if (curr.isFile) {
+                    total += curr.length()
+                } else if (curr.isDirectory) {
+                    curr.listFiles()?.forEach { stack.addLast(it) }
+                }
+            }
+            return total
+        }
+
+        @JavascriptInterface
+        fun moveToTrash(itemsJson: String): String {
+            return try {
+                val arr = JSONArray(itemsJson)
+                val trashDir = getTrashRootDir()
+                val result = JSONArray()
+                val scannedPaths = ArrayList<String>()
+
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val path = obj.optString("realPath", "")
+                    if (path.isBlank()) continue
+                    val src = File(path)
+                    if (!src.exists()) continue
+
+                    val origParentId = obj.optString("parentId", "internal_root")
+                    val origKind = if (src.isDirectory) "folder" else inferKind(src.name)
+                    val origModified = src.lastModified()
+                    val origSize = computeSizeRecursive(src)
+                    val trashId = "${System.currentTimeMillis()}_${i}_${(1000..9999).random()}"
+                    val wrapperDir = File(trashDir, trashId)
+                    if (!wrapperDir.mkdirs()) continue
+                    val dest = File(wrapperDir, src.name)
+
+                    var moved = src.renameTo(dest)
+                    if (!moved) {
+                        moved = if (src.copyRecursively(dest, overwrite = true)) {
+                            src.deleteRecursively()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+
+                    if (moved) {
+                        val trashedAt = System.currentTimeMillis()
+                        val meta = JSONObject().apply {
+                            put("trashId", trashId)
+                            put("id", "trash_$trashId")
+                            put("name", src.name)
+                            put("parentId", "trash_root")
+                            put("originalParentId", origParentId)
+                            put("originalPath", src.absolutePath)
+                            put("realPath", dest.absolutePath)
+                            put("kind", origKind)
+                            put("size", origSize)
+                            put("modifiedAt", origModified)
+                            put("trashedAt", trashedAt)
+                            put("trashed", true)
+                            put("hidden", src.name.startsWith("."))
+                        }
+                        File(trashDir, "$trashId.meta.json").writeText(meta.toString())
+                        scannedPaths.add(src.absolutePath)
+                        meta.put("sourceId", obj.optString("id", ""))
+                        result.put(meta)
+                    } else {
+                        wrapperDir.deleteRecursively()
+                    }
+                }
+
+                notifyMediaScanner(scannedPaths)
+                result.toString()
+            } catch (_: Exception) {
+                "[]"
+            }
+        }
+
+        private fun buildTrashItemsJsonArray(): JSONArray {
+            val result = JSONArray()
+            val trashDir = getTrashRootDir()
+            val files = trashDir.listFiles() ?: return result
+            val metas = files.filter { it.isFile && it.name.endsWith(".meta.json") }
+            for (metaFile in metas) {
+                try {
+                    val meta = JSONObject(metaFile.readText())
+                    val trashPath = meta.optString("realPath", "")
+                    if (trashPath.isBlank() || !File(trashPath).exists()) {
+                        metaFile.delete()
+                        continue
+                    }
+                    meta.put("trashed", true)
+                    result.put(meta)
+                } catch (_: Exception) {
+                }
+            }
+            return result
+        }
+
+        @JavascriptInterface
+        fun getTrashItems(): String {
+            return try {
+                buildTrashItemsJsonArray().toString()
+            } catch (_: Exception) {
+                "[]"
+            }
+        }
+
+        @JavascriptInterface
+        fun getTrashItemsAsync(requestId: String) {
+            ioExecutor.execute {
+                val items = try {
+                    buildTrashItemsJsonArray()
+                } catch (_: Exception) {
+                    JSONArray()
+                }
+                dispatchWebEvent("android_trash_items_result", JSONObject().apply {
+                    put("requestId", requestId)
+                    put("items", items)
+                })
+            }
+        }
+
+        @JavascriptInterface
+        fun restoreFromTrash(itemsJson: String): String {
+            return try {
+                val arr = JSONArray(itemsJson)
+                val trashDir = getTrashRootDir()
+                val result = JSONArray()
+                val scannedPaths = ArrayList<String>()
+
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val trashPath = obj.optString("realPath", "")
+                    val originalPath = obj.optString("originalPath", "")
+                    val itemId = obj.optString("id", "")
+                    if (trashPath.isBlank()) continue
+                    val src = File(trashPath)
+                    if (!src.exists()) continue
+
+                    val targetParent = if (originalPath.isNotBlank()) {
+                        File(originalPath).parentFile ?: Environment.getExternalStorageDirectory()
+                    } else {
+                        Environment.getExternalStorageDirectory()
+                    }
+                    if (!targetParent.exists()) targetParent.mkdirs()
+
+                    var dest = File(targetParent, src.name)
+                    if (dest.exists()) {
+                        dest = File(targetParent, "Restored_${System.currentTimeMillis()}_${src.name}")
+                    }
+
+                    var restored = src.renameTo(dest)
+                    if (!restored) {
+                        restored = if (src.copyRecursively(dest, overwrite = true)) {
+                            src.deleteRecursively()
+                            true
+                        } else {
+                            false
+                        }
+                    }
+
+                    if (restored) {
+                        val wrapperDir = src.parentFile
+                        if (wrapperDir != null && wrapperDir.parentFile?.absolutePath == trashDir.absolutePath) {
+                            val trashId = wrapperDir.name
+                            File(trashDir, "$trashId.meta.json").delete()
+                            wrapperDir.deleteRecursively()
+                        }
+                        scannedPaths.add(dest.absolutePath)
+                        result.put(JSONObject().apply {
+                            put("id", itemId)
+                            put("restoredPath", dest.absolutePath)
+                            put("success", true)
+                        })
+                    }
+                }
+
+                notifyMediaScanner(scannedPaths)
+                result.toString()
+            } catch (_: Exception) {
+                "[]"
+            }
+        }
+
+        @JavascriptInterface
+        fun emptyTrash(): Boolean {
+            return try {
+                val trashDir = getTrashRootDir()
+                val removedPaths = ArrayList<String>()
+                val children = trashDir.listFiles() ?: return true
+                for (child in children) {
+                    if (child.name == ".nomedia") continue
+                    if (child.isFile && child.name.endsWith(".meta.json")) {
+                        try {
+                            val meta = JSONObject(child.readText())
+                            val orig = meta.optString("originalPath", "")
+                            if (orig.isNotBlank()) removedPaths.add(orig)
+                        } catch (_: Exception) {
+                        }
+                    }
+                    removedPaths.add(child.absolutePath)
+                    child.deleteRecursively()
+                }
+                getTrashRootDir()
+                notifyMediaScanner(removedPaths)
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
         @JavascriptInterface
         fun deletePaths(pathsJson: String, moveToTrash: Boolean): Boolean {
             return try {
                 val arr = JSONArray(pathsJson)
                 var allOk = true
-                val trashDir = File(Environment.getExternalStorageDirectory(), ".AGFileManagerTrash")
-                if (moveToTrash && !trashDir.exists()) {
-                    trashDir.mkdirs()
-                }
+                val trashDir = getTrashRootDir()
+                val scannedPaths = ArrayList<String>()
                 for (i in 0 until arr.length()) {
                     val f = File(arr.getString(i))
                     if (!f.exists()) continue
                     if (moveToTrash) {
-                        val dest = File(trashDir, "${System.currentTimeMillis()}_${f.name}")
-                        if (!f.renameTo(dest)) {
-                            if (!f.deleteRecursively()) allOk = false
+                        val trashId = "${System.currentTimeMillis()}_${i}"
+                        val wrapperDir = File(trashDir, trashId)
+                        wrapperDir.mkdirs()
+                        val dest = File(wrapperDir, f.name)
+                        val moved = f.renameTo(dest) || (f.copyRecursively(dest, overwrite = true) && f.deleteRecursively())
+                        if (!moved) {
+                            wrapperDir.deleteRecursively()
+                            allOk = false
+                        } else {
+                            scannedPaths.add(f.absolutePath)
                         }
                     } else {
-                        if (!f.deleteRecursively()) allOk = false
+                        val absPath = f.absolutePath
+                        if (f.deleteRecursively()) {
+                            scannedPaths.add(absPath)
+                            val wrapperDir = f.parentFile
+                            if (wrapperDir != null && wrapperDir.parentFile?.absolutePath == trashDir.absolutePath) {
+                                val trashId = wrapperDir.name
+                                val metaFile = File(trashDir, "$trashId.meta.json")
+                                if (metaFile.exists()) {
+                                    try {
+                                        val orig = JSONObject(metaFile.readText()).optString("originalPath", "")
+                                        if (orig.isNotBlank()) scannedPaths.add(orig)
+                                    } catch (_: Exception) {
+                                    }
+                                    metaFile.delete()
+                                }
+                                wrapperDir.deleteRecursively()
+                            }
+                        } else {
+                            allOk = false
+                        }
                     }
                 }
+                notifyMediaScanner(scannedPaths)
                 allOk
             } catch (_: Exception) {
                 false
@@ -1059,6 +1458,7 @@ class MainActivity : Activity() {
                 val destDir = File(targetDirPath)
                 if (!destDir.exists() && !destDir.mkdirs()) return false
                 var allOk = true
+                val scannedPaths = ArrayList<String>()
                 for (i in 0 until arr.length()) {
                     val src = File(arr.getString(i))
                     if (!src.exists()) continue
@@ -1074,12 +1474,17 @@ class MainActivity : Activity() {
                                 allOk = false
                             }
                         }
+                        scannedPaths.add(src.absolutePath)
+                        scannedPaths.add(dest.absolutePath)
                     } else {
-                        if (!src.copyRecursively(dest, overwrite = true)) {
+                        if (src.copyRecursively(dest, overwrite = true)) {
+                            scannedPaths.add(dest.absolutePath)
+                        } else {
                             allOk = false
                         }
                     }
                 }
+                notifyMediaScanner(scannedPaths)
                 allOk
             } catch (_: Exception) {
                 false
@@ -1348,8 +1753,18 @@ class MainActivity : Activity() {
             if (pkgInfo == null) return emptySet()
             return try {
                 val sigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    val si = pkgInfo.signingInfo ?: return emptySet()
-                    if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+                    val si = pkgInfo.signingInfo
+                    val modernSigs = if (si != null) {
+                        if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+                    } else {
+                        null
+                    }
+                    if (modernSigs != null && modernSigs.isNotEmpty()) {
+                        modernSigs
+                    } else {
+                        @Suppress("DEPRECATION")
+                        pkgInfo.signatures
+                    }
                 } else {
                     @Suppress("DEPRECATION")
                     pkgInfo.signatures
@@ -1379,17 +1794,21 @@ class MainActivity : Activity() {
                         put("reason", "Downloaded APK file was not found in Download folder.")
                     }.toString()
 
+                @Suppress("DEPRECATION")
+                val sigFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+                } else {
+                    PackageManager.GET_SIGNATURES
+                }
+
                 val archiveInfo: PackageInfo? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     packageManager.getPackageArchiveInfo(
                         apkFile.absolutePath,
-                        PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
+                        PackageManager.PackageInfoFlags.of(sigFlags.toLong())
                     )
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    @Suppress("DEPRECATION")
-                    packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
                 } else {
                     @Suppress("DEPRECATION")
-                    packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.GET_SIGNATURES)
+                    packageManager.getPackageArchiveInfo(apkFile.absolutePath, sigFlags)
                 }
 
                 if (archiveInfo == null || archiveInfo.packageName != BuildConfig.APPLICATION_ID) {
@@ -1403,14 +1822,11 @@ class MainActivity : Activity() {
                 val installedInfo: PackageInfo? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     packageManager.getPackageInfo(
                         packageName,
-                        PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
+                        PackageManager.PackageInfoFlags.of(sigFlags.toLong())
                     )
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    @Suppress("DEPRECATION")
-                    packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
                 } else {
                     @Suppress("DEPRECATION")
-                    packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+                    packageManager.getPackageInfo(packageName, sigFlags)
                 }
 
                 val installedCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -1426,14 +1842,6 @@ class MainActivity : Activity() {
                     archiveInfo.versionCode.toLong()
                 }
 
-                if (archiveCode < installedCode) {
-                    return JSONObject().apply {
-                        put("compatible", false)
-                        put("code", "downgrade")
-                        put("reason", "Downloaded version (Build $archiveCode) is older than installed version (Build $installedCode).")
-                    }.toString()
-                }
-
                 val installedSigs = extractSignatureSha256Set(installedInfo)
                 val archiveSigs = extractSignatureSha256Set(archiveInfo)
                 if (installedSigs.isNotEmpty() && archiveSigs.isNotEmpty() &&
@@ -1444,8 +1852,16 @@ class MainActivity : Activity() {
                         put("code", "signature_mismatch")
                         put(
                             "reason",
-                            "The installed version uses a different signing key. Uninstall the old app once, then install ${apkFile.name} from Download."
+                            "This APK uses a different signing key than the installed AG File Manager. Uninstall the old app once, then install ${apkFile.name} cleanly."
                         )
+                    }.toString()
+                }
+
+                if (archiveCode < installedCode) {
+                    return JSONObject().apply {
+                        put("compatible", false)
+                        put("code", "downgrade")
+                        put("reason", "Selected version (Build $archiveCode) is older than installed version (Build $installedCode).")
                     }.toString()
                 }
 

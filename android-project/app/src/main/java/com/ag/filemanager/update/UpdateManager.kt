@@ -284,18 +284,59 @@ class UpdateManager(
         }
 
         if (apkFile != null) {
+            @Suppress("DEPRECATION")
+            val sigFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
+            } else {
+                PackageManager.GET_SIGNATURES
+            }
             val archiveInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 activity.packageManager.getPackageArchiveInfo(
                     apkFile.absolutePath,
-                    PackageManager.PackageInfoFlags.of(0)
+                    PackageManager.PackageInfoFlags.of(sigFlags.toLong())
                 )
             } else {
                 @Suppress("DEPRECATION")
-                activity.packageManager.getPackageArchiveInfo(apkFile.absolutePath, 0)
+                activity.packageManager.getPackageArchiveInfo(apkFile.absolutePath, sigFlags)
             }
 
             if (archiveInfo == null || archiveInfo.packageName != BuildConfig.APPLICATION_ID) {
                 showSimpleError("Downloaded package is corrupted or mismatched. Please retry.")
+                return
+            }
+
+            val installedInfo = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    activity.packageManager.getPackageInfo(
+                        activity.packageName,
+                        PackageManager.PackageInfoFlags.of(sigFlags.toLong())
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    activity.packageManager.getPackageInfo(activity.packageName, sigFlags)
+                }
+            } catch (_: Exception) {
+                null
+            }
+
+            val installedSigs = extractSha256Signatures(installedInfo)
+            val archiveSigs = extractSha256Signatures(archiveInfo)
+            if (installedSigs.isNotEmpty() && archiveSigs.isNotEmpty() && installedSigs.intersect(archiveSigs).isEmpty()) {
+                AlertDialog.Builder(activity)
+                    .setTitle("Reinstall Required Once")
+                    .setMessage("The installed version uses a different signing key. Uninstall the old app once, then install ${apkFile.name} from Download.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Uninstall Old App") { _, _ ->
+                        try {
+                            val uninstallIntent = Intent(
+                                Intent.ACTION_DELETE,
+                                Uri.parse("package:${activity.packageName}")
+                            )
+                            activity.startActivity(uninstallIntent)
+                        } catch (_: Exception) {
+                        }
+                    }
+                    .show()
                 return
             }
         }
@@ -318,6 +359,31 @@ class UpdateManager(
         }
 
         launchApkInstaller(contentUri)
+    }
+
+    private fun extractSha256Signatures(pkgInfo: android.content.pm.PackageInfo?): Set<String> {
+        if (pkgInfo == null) return emptySet()
+        return try {
+            val sigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val si = pkgInfo.signingInfo
+                val modern = if (si != null) {
+                    if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+                } else null
+                if (modern != null && modern.isNotEmpty()) modern else {
+                    @Suppress("DEPRECATION")
+                    pkgInfo.signatures
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                pkgInfo.signatures
+            } ?: return emptySet()
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            sigs.map { sig ->
+                md.digest(sig.toByteArray()).joinToString("") { "%02x".format(it) }
+            }.toSet()
+        } catch (_: Exception) {
+            emptySet()
+        }
     }
 
     fun resumePendingInstallIfGranted() {

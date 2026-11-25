@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   BarChart3,
+  Check,
   DownloadCloud,
   Eye,
   HardDrive,
@@ -128,10 +129,10 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
 
         <div className="my-2 border-t border-slate-100 dark:border-slate-800" />
 
-        {/* Toggle: Show Hidden Files */}
+        {/* Checkbox: Show Hidden Files */}
         <button
           type="button"
-          role="switch"
+          role="checkbox"
           aria-checked={settings.showHiddenFiles}
           onClick={onToggleHidden}
           className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl flex items-center justify-between gap-3 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors"
@@ -141,22 +142,20 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
             <span>Show Hidden Files</span>
           </span>
           <span
-            className={`w-10 h-5.5 rounded-full p-0.5 transition-colors flex items-center ${
-              settings.showHiddenFiles ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'
+            className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors shrink-0 ${
+              settings.showHiddenFiles
+                ? 'bg-blue-600 border-blue-600 text-white'
+                : 'border-slate-300 dark:border-slate-600 bg-transparent text-transparent'
             }`}
           >
-            <span
-              className={`w-4.5 h-4.5 rounded-full bg-white shadow-sm transform transition-transform ${
-                settings.showHiddenFiles ? 'translate-x-4.5' : 'translate-x-0'
-              }`}
-            />
+            <Check size={14} strokeWidth={2.75} />
           </span>
         </button>
 
-        {/* Toggle: Show Thumbnails */}
+        {/* Checkbox: Show Thumbnails */}
         <button
           type="button"
-          role="switch"
+          role="checkbox"
           aria-checked={settings.showThumbnails}
           onClick={onToggleThumbnails}
           className="w-full min-h-[44px] px-3.5 py-2.5 rounded-xl flex items-center justify-between gap-3 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors"
@@ -166,15 +165,13 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
             <span>Show Thumbnails</span>
           </span>
           <span
-            className={`w-10 h-5.5 rounded-full p-0.5 transition-colors flex items-center ${
-              settings.showThumbnails ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'
+            className={`w-5 h-5 rounded-md border flex items-center justify-center transition-colors shrink-0 ${
+              settings.showThumbnails
+                ? 'bg-blue-600 border-blue-600 text-white'
+                : 'border-slate-300 dark:border-slate-600 bg-transparent text-transparent'
             }`}
           >
-            <span
-              className={`w-4.5 h-4.5 rounded-full bg-white shadow-sm transform transition-transform ${
-                settings.showThumbnails ? 'translate-x-4.5' : 'translate-x-0'
-              }`}
-            />
+            <Check size={14} strokeWidth={2.75} />
           </span>
         </button>
 

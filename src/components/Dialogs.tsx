@@ -9,6 +9,7 @@ import {
   FileText,
   Music,
   RotateCcw,
+  Trash2,
   WrapText,
   X,
   ZoomIn,
@@ -800,6 +801,98 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
               </button>
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface DeleteConfirmDialogProps {
+  open: boolean;
+  itemCount: number;
+  singleItemName?: string;
+  permanentOnly?: boolean;
+  isEmptyBin?: boolean;
+  onCancel: () => void;
+  onMoveToBin?: () => void;
+  onDeletePermanently: () => void;
+}
+
+export const DeleteConfirmDialog: React.FC<DeleteConfirmDialogProps> = ({
+  open,
+  itemCount,
+  singleItemName,
+  permanentOnly = false,
+  isEmptyBin = false,
+  onCancel,
+  onMoveToBin,
+  onDeletePermanently,
+}) => {
+  if (!open) return null;
+
+  const title = isEmptyBin
+    ? 'Empty Recycle Bin?'
+    : permanentOnly
+      ? itemCount === 1 && singleItemName
+        ? `Delete "${singleItemName}" permanently?`
+        : `Delete ${itemCount} items permanently?`
+      : itemCount === 1 && singleItemName
+        ? `Delete "${singleItemName}"?`
+        : `Delete ${itemCount} items?`;
+
+  const description = isEmptyBin
+    ? 'All files in the Recycle Bin will be permanently deleted from your phone storage.'
+    : permanentOnly
+      ? 'This will permanently delete the selected items from your phone storage and cannot be undone.'
+      : 'Move to Recycle Bin to restore later, or delete permanently from your phone storage.';
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs"
+      onClick={onCancel}
+    >
+      <div
+        className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-5 space-y-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+            <Trash2 size={20} />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 break-words">
+              {title}
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+              {description}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2 pt-1">
+          {!permanentOnly && onMoveToBin && (
+            <button
+              type="button"
+              onClick={onMoveToBin}
+              className="w-full min-h-[42px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              Move to Recycle Bin
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onDeletePermanently}
+            className="w-full min-h-[42px] px-4 py-2 rounded-xl text-sm font-semibold bg-rose-600 hover:bg-rose-700 text-white"
+          >
+            {isEmptyBin ? 'Empty Recycle Bin' : 'Delete Permanently'}
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="w-full min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
+          >
+            Cancel
+          </button>
         </div>
       </div>
     </div>

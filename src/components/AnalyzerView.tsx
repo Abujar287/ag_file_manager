@@ -23,8 +23,11 @@ import { FileIcon } from './FileIcon';
 interface AnalyzerViewProps {
   tool: AnalyzerToolType;
   files: FileNode[];
+  nativeEmptyFolders?: FileNode[];
+  emptyFoldersLoading?: boolean;
   showThumbnails: boolean;
   onBackHome: () => void;
+  onRefreshEmptyFolders?: () => void;
   onOpenFolder: (folderId: string) => void;
   onOpenFile: (file: FileNode) => void;
   onDeleteFiles: (ids: string[]) => void;
@@ -153,8 +156,11 @@ const AnalyzerFileRow: React.FC<SelectableRowProps> = ({
 export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
   tool,
   files,
+  nativeEmptyFolders,
+  emptyFoldersLoading = false,
   showThumbnails,
   onBackHome,
+  onRefreshEmptyFolders,
   onOpenFolder,
   onOpenFile,
   onDeleteFiles,
@@ -182,10 +188,13 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
     setSelectedIds((prev) => {
       if (prev.length === 0) return prev;
       const existing = new Set(files.filter((f) => !f.trashed).map((f) => f.id));
+      if (nativeEmptyFolders) {
+        nativeEmptyFolders.forEach((f) => existing.add(f.id));
+      }
       const next = prev.filter((id) => existing.has(id));
       return next.length === prev.length ? prev : next;
     });
-  }, [files]);
+  }, [files, nativeEmptyFolders]);
 
   const {
     breakdownGroups,
@@ -300,13 +309,15 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
     const recent = [...nonFolderFiles]
       .sort((a, b) => b.modifiedAt - a.modifiedAt)
       .slice(0, 40);
-    const empty = activeFiles.filter(
-      (n) =>
-        n.kind === 'folder' &&
-        n.parentId !== null &&
-        !n.hidden &&
-        !nonEmptyParentIds.has(n.id)
-    );
+    const empty = nativeEmptyFolders
+      ? nativeEmptyFolders.filter((n) => !n.trashed)
+      : activeFiles.filter(
+          (n) =>
+            n.kind === 'folder' &&
+            n.parentId !== null &&
+            !n.hidden &&
+            !nonEmptyParentIds.has(n.id)
+        );
     const dups = Array.from(hashGroups.values()).filter((g) => g.length > 1);
 
     return {
@@ -319,7 +330,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
       totalCacheBytes: cacheBytesSum,
       duplicateGroups: dups,
     };
-  }, [files]);
+  }, [files, nativeEmptyFolders]);
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) =>
@@ -354,10 +365,10 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
     visibleSelectableIds.length > 0 &&
     visibleSelectableIds.every((id) => selectedIds.includes(id));
 
-  const selectedNodes = useMemo(
-    () => files.filter((f) => selectedIds.includes(f.id)),
-    [files, selectedIds]
-  );
+  const selectedNodes = useMemo(() => {
+    const pool = tool === 'empty_folders' && nativeEmptyFolders ? nativeEmptyFolders : files;
+    return pool.filter((f) => selectedIds.includes(f.id));
+  }, [tool, nativeEmptyFolders, files, selectedIds]);
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 space-y-4 pb-24">
@@ -562,19 +573,35 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
       {/* Tool Body: Empty Folders */}
       {tool === 'empty_folders' && (
         <div className="space-y-3">
-          {emptyFolders.length > 0 && (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => onCleanEmptyFolders(emptyFolders.map((f) => f.id))}
-                className="min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                Remove All Empty Folders ({emptyFolders.length})
-              </button>
+          {(emptyFolders.length > 0 || onRefreshEmptyFolders) && (
+            <div className="flex items-center justify-end gap-2">
+              {onRefreshEmptyFolders && (
+                <button
+                  type="button"
+                  onClick={onRefreshEmptyFolders}
+                  className="min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
+                >
+                  Scan Again
+                </button>
+              )}
+              {emptyFolders.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onCleanEmptyFolders(emptyFolders.map((f) => f.id))}
+                  className="min-h-[40px] px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  Remove All Empty Folders ({emptyFolders.length})
+                </button>
+              )}
             </div>
           )}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden divide-y divide-slate-100 dark:divide-slate-800">
-            {emptyFolders.length === 0 ? (
+            {emptyFoldersLoading && emptyFolders.length === 0 ? (
+              <div className="p-10 text-center space-y-2.5">
+                <div className="w-6 h-6 mx-auto rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+                <p className="text-sm text-slate-500">Scanning storage for empty folders...</p>
+              </div>
+            ) : emptyFolders.length === 0 ? (
               <div className="p-10 text-center text-sm text-slate-500">
                 No empty folders detected. Storage is clean.
               </div>
@@ -587,7 +614,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                   selected={selectedIds.includes(folder.id)}
                   isSelecting={isSelecting}
                   showThumbnails={false}
-                  subtitle={getNodePath(folder.id, files)}
+                  subtitle={folder.realPath || getNodePath(folder.id, files)}
                   onPrimaryClick={(node) => onOpenFolder(node.id)}
                   onToggleSelect={toggleSelect}
                   onMoveSingle={(id) => onMoveFiles([id])}

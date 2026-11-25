@@ -55,14 +55,45 @@ object StorageAnalyzer {
 
     fun findEmptyFolders(root: File): List<File> {
         val empty = mutableListOf<File>()
-        root.walkTopDown()
-            .filter { it.isDirectory && !it.name.startsWith(".") }
-            .forEach { dir ->
-                val children = dir.listFiles()
-                if (children != null && children.isEmpty()) {
+        if (!root.exists() || !root.isDirectory || !root.canRead()) return empty
+        val rootCanonical = try {
+            root.canonicalPath
+        } catch (_: Exception) {
+            root.absolutePath
+        }
+        val queue = ArrayDeque<File>()
+        queue.add(root)
+        var visitedDirs = 0
+        val maxDirs = 25000
+
+        while (queue.isNotEmpty() && visitedDirs < maxDirs) {
+            val dir = queue.removeFirst()
+            visitedDirs++
+            val children = dir.listFiles() ?: continue
+            if (children.isEmpty()) {
+                val canon = try {
+                    dir.canonicalPath
+                } catch (_: Exception) {
+                    dir.absolutePath
+                }
+                if (canon != rootCanonical) {
                     empty.add(dir)
                 }
+                continue
             }
+            val dirCanon = try {
+                dir.canonicalPath
+            } catch (_: Exception) {
+                dir.absolutePath
+            }
+            for (child in children) {
+                if (!child.isDirectory) continue
+                val name = child.name
+                if (name.startsWith(".")) continue
+                if (name == "Android" && dirCanon == rootCanonical) continue
+                queue.addLast(child)
+            }
+        }
         return empty
     }
 

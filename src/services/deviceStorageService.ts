@@ -40,6 +40,9 @@ export interface AndroidBridgeInterface {
   listDirectoryAsync?: (requestId: string, path: string) => void;
   scanAllCategories?: () => string;
   scanAllCategoriesAsync?: (requestId: string) => void;
+  findEmptyFolders?: () => string;
+  findEmptyFoldersAsync?: (requestId: string) => void;
+  deleteEmptyFolders?: (pathsJson: string) => boolean;
   calculatePropertiesAsync?: (requestId: string, pathsJson: string) => void;
   getPdfPageCount?: (path: string) => number;
   renderPdfPageAsync?: (requestId: string, path: string, pageIndex: number) => void;
@@ -49,6 +52,11 @@ export interface AndroidBridgeInterface {
   readTextFileAsync?: (requestId: string, path: string) => void;
   writeTextFile?: (path: string, content: string) => boolean;
   renamePath?: (path: string, newName: string) => boolean;
+  moveToTrash?: (itemsJson: string) => string;
+  getTrashItems?: () => string;
+  getTrashItemsAsync?: (requestId: string) => void;
+  restoreFromTrash?: (itemsJson: string) => string;
+  emptyTrash?: () => boolean;
   deletePaths?: (pathsJson: string, moveToTrash: boolean) => boolean;
   copyOrMovePaths?: (pathsJson: string, targetDirPath: string, move: boolean) => boolean;
   downloadWithDownloadManager?: (url: string, fileName: string, title: string) => string;
@@ -68,6 +76,7 @@ export interface AndroidBridgeInterface {
   launchApp?: (packageName: string) => boolean;
   openAppDetails?: (packageName: string) => boolean;
   uninstallApp?: (packageName: string) => boolean;
+  uninstallApps?: (packagesJson: string) => boolean;
 }
 
 declare global {
@@ -365,6 +374,22 @@ export function uninstallInstalledApp(packageName: string): boolean {
     } catch {
       return false;
     }
+  }
+  return false;
+}
+
+export function uninstallInstalledApps(packageNames: string[]): boolean {
+  if (packageNames.length === 0) return false;
+  const bridge = getNativeBridge();
+  if (bridge && typeof bridge.uninstallApps === 'function') {
+    try {
+      return Boolean(bridge.uninstallApps(JSON.stringify(packageNames)));
+    } catch {
+      return false;
+    }
+  }
+  if (packageNames.length === 1) {
+    return uninstallInstalledApp(packageNames[0]);
   }
   return false;
 }

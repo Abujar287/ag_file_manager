@@ -28,7 +28,12 @@ import { UpdateModal } from './components/UpdateModal';
 import { ViewSortModal } from './components/ViewSortModal';
 import { SettingsView } from './components/SettingsView';
 import { AboutView } from './components/AboutView';
-import { FileViewerDialog, NewItemDialog, PropertiesDialog } from './components/Dialogs';
+import {
+  DeleteConfirmDialog,
+  FileViewerDialog,
+  NewItemDialog,
+  PropertiesDialog,
+} from './components/Dialogs';
 import { ExitConfirmDialog } from './components/ExitConfirmDialog';
 import { StoragePermissionModal } from './components/StoragePermissionModal';
 import {
@@ -223,6 +228,17 @@ export default function App() {
 
   const [installedApps, setInstalledApps] = useState<InstalledApp[]>([]);
   const [installedAppsLoading, setInstalledAppsLoading] = useState(false);
+  const [nativeEmptyFolders, setNativeEmptyFolders] = useState<FileNode[]>([]);
+  const [emptyFoldersLoading, setEmptyFoldersLoading] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    ids: string[];
+    permanentOnly: boolean;
+    isEmptyBin?: boolean;
+  } | null>(null);
+  const [apkConflictPrompt, setApkConflictPrompt] = useState<{
+    fileName: string;
+    reason: string;
+  } | null>(null);
 
   // Left-to-right swipe navigation state (DOM-driven to avoid 60fps full-tree re-renders)
   const swipeIndicatorRef = useRef<HTMLDivElement>(null);
@@ -303,6 +319,8 @@ export default function App() {
 
   const filesRef = useRef(files);
   filesRef.current = files;
+  const nativeEmptyFoldersRef = useRef(nativeEmptyFolders);
+  nativeEmptyFoldersRef.current = nativeEmptyFolders;
   const activeTabIdRef = useRef(activeTab.id);
   activeTabIdRef.current = activeTab.id;
   const storageStatsRef = useRef(storageStats);
@@ -313,7 +331,7 @@ export default function App() {
       const byId = new Map(prev.map((n) => [n.id, n]));
       if (replaceSameParent && parentId) {
         for (const [id, node] of byId.entries()) {
-          if (node.parentId === parentId && id !== 'internal_root' && id !== 'sd_root') {
+          if (node.parentId === parentId && !node.trashed && id !== 'internal_root' && id !== 'sd_root') {
             byId.delete(id);
           }
         }
@@ -330,6 +348,8 @@ export default function App() {
   const lastCategoryScanAtRef = useRef<number>(0);
   const pendingAppsReqRef = useRef<string | null>(null);
   const lastAppsScanAtRef = useRef<number>(0);
+  const pendingEmptyFoldersReqRef = useRef<string | null>(null);
+  const pendingTrashReqRef = useRef<string | null>(null);
 
   const loadNativeFolder = useCallback((folderId: string, explicitPath?: string) => {
     const bridge = getNativeBridge();
@@ -452,6 +472,67 @@ export default function App() {
     }
   }, []);
 
+  const loadNativeEmptyFolders = useCallback(() => {
+    const bridge = getNativeBridge();
+    if (!bridge) return;
+    if (typeof bridge.findEmptyFoldersAsync === 'function') {
+      const reqId = `empty_${Date.now()}`;
+      pendingEmptyFoldersReqRef.current = reqId;
+      setEmptyFoldersLoading(true);
+      try {
+        bridge.findEmptyFoldersAsync(reqId);
+        return;
+      } catch {
+        setEmptyFoldersLoading(false);
+      }
+    }
+    if (typeof bridge.findEmptyFolders === 'function') {
+      setEmptyFoldersLoading(true);
+      window.setTimeout(() => {
+        try {
+          const raw = bridge.findEmptyFolders!();
+          const parsed = raw ? (JSON.parse(raw) as FileNode[]) : [];
+          if (Array.isArray(parsed)) {
+            setNativeEmptyFolders(parsed);
+          }
+        } catch {
+          // ignore
+        } finally {
+          setEmptyFoldersLoading(false);
+        }
+      }, 20);
+    }
+  }, []);
+
+  const loadNativeTrashItems = useCallback(() => {
+    const bridge = getNativeBridge();
+    if (!bridge) return;
+    if (typeof bridge.getTrashItemsAsync === 'function') {
+      const reqId = `trash_${Date.now()}`;
+      pendingTrashReqRef.current = reqId;
+      try {
+        bridge.getTrashItemsAsync(reqId);
+        return;
+      } catch {
+        // fall through
+      }
+    }
+    if (typeof bridge.getTrashItems === 'function') {
+      try {
+        const raw = bridge.getTrashItems();
+        const parsed = raw ? (JSON.parse(raw) as FileNode[]) : [];
+        if (Array.isArray(parsed)) {
+          setFiles((prev) => [
+            ...parsed.map((item) => ({ ...item, trashed: true })),
+            ...prev.filter((n) => !n.trashed),
+          ]);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+
   const refreshNativeDeviceState = async () => {
     const granted = await checkStoragePermissionGranted();
     setHasStoragePermission(granted);
@@ -484,9 +565,11 @@ export default function App() {
     }
 
     loadInstalledApps(true);
+    loadNativeTrashItems();
 
     if (granted) {
       triggerAsyncCategoryScan(true);
+      loadNativeEmptyFolders();
     }
   };
 
@@ -533,16 +616,49 @@ export default function App() {
         setInstalledApps(detail.apps);
       }
     };
+    const onAppsChanged = () => {
+      loadInstalledApps(true);
+    };
+    const onEmptyFoldersResult = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as {
+        requestId?: string;
+        folders?: FileNode[];
+      };
+      if (!detail?.requestId || detail.requestId !== pendingEmptyFoldersReqRef.current) return;
+      setEmptyFoldersLoading(false);
+      if (Array.isArray(detail.folders)) {
+        setNativeEmptyFolders(detail.folders);
+      }
+    };
+    const onTrashItemsResult = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as {
+        requestId?: string;
+        items?: FileNode[];
+      };
+      if (!detail?.requestId || detail.requestId !== pendingTrashReqRef.current) return;
+      if (Array.isArray(detail.items)) {
+        setFiles((prev) => [
+          ...detail.items!.map((item) => ({ ...item, trashed: true })),
+          ...prev.filter((n) => !n.trashed),
+        ]);
+      }
+    };
 
     window.addEventListener('android_permission_result', onPermissionEvent);
     window.addEventListener('android_dir_result', onDirResult);
     window.addEventListener('android_categories_result', onCategoriesResult);
     window.addEventListener('android_installed_apps_result', onInstalledAppsResult);
+    window.addEventListener('android_apps_changed', onAppsChanged);
+    window.addEventListener('android_empty_folders_result', onEmptyFoldersResult);
+    window.addEventListener('android_trash_items_result', onTrashItemsResult);
     return () => {
       window.removeEventListener('android_permission_result', onPermissionEvent);
       window.removeEventListener('android_dir_result', onDirResult);
       window.removeEventListener('android_categories_result', onCategoriesResult);
       window.removeEventListener('android_installed_apps_result', onInstalledAppsResult);
+      window.removeEventListener('android_apps_changed', onAppsChanged);
+      window.removeEventListener('android_empty_folders_result', onEmptyFoldersResult);
+      window.removeEventListener('android_trash_items_result', onTrashItemsResult);
     };
   }, []);
 
@@ -563,11 +679,19 @@ export default function App() {
     } else if (screen.type === 'category' && isRunningInAndroidApp()) {
       if (screen.category === 'apps') {
         loadInstalledApps(false);
+      } else if (screen.category === 'recycle_bin') {
+        loadNativeTrashItems();
+      } else {
+        triggerAsyncCategoryScan(false);
+      }
+    } else if (screen.type === 'analyzer' && isRunningInAndroidApp()) {
+      if (screen.tool === 'empty_folders') {
+        loadNativeEmptyFolders();
       } else {
         triggerAsyncCategoryScan(false);
       }
     }
-  }, [loadNativeFolder, loadInstalledApps, triggerAsyncCategoryScan]);
+  }, [loadNativeFolder, loadInstalledApps, loadNativeTrashItems, loadNativeEmptyFolders, triggerAsyncCategoryScan]);
 
   const navigateInActiveTab = useCallback((screen: ActiveScreen) => {
     setSearchOpen(false);
@@ -610,6 +734,10 @@ export default function App() {
     }
     if (viewingFile) {
       setViewingFile(null);
+      return;
+    }
+    if (deleteConfirm) {
+      setDeleteConfirm(null);
       return;
     }
     if (propertiesNodes) {
@@ -839,6 +967,31 @@ export default function App() {
     const bridge = getNativeBridge();
     if (bridge && file.realPath) {
       if (file.kind === 'apk' && typeof bridge.installApk === 'function') {
+        if (typeof bridge.checkApkInstallCompatibility === 'function') {
+          try {
+            const raw = bridge.checkApkInstallCompatibility(file.realPath);
+            const compat = JSON.parse(raw) as {
+              compatible?: boolean;
+              code?: string;
+              reason?: string;
+            };
+            if (compat?.code === 'signature_mismatch') {
+              setApkConflictPrompt({
+                fileName: file.name,
+                reason:
+                  compat.reason ||
+                  `This APK uses a different signing key than the installed AG File Manager. Uninstall the old app once, then install ${file.name} cleanly.`,
+              });
+              return;
+            }
+            if (compat?.code === 'downgrade') {
+              showToast(compat.reason || 'Selected APK is older than the installed version.');
+              return;
+            }
+          } catch {
+            // continue to system installer if check fails
+          }
+        }
         const ok = bridge.installApk(file.realPath);
         if (ok) return;
       }
@@ -935,8 +1088,9 @@ export default function App() {
     const bridge = getNativeBridge();
 
     if (bridge && typeof bridge.copyOrMovePaths === 'function') {
+      const lookupPool = [...currentFiles, ...nativeEmptyFoldersRef.current];
       const sourcePaths = ids
-        .map((id) => currentFiles.find((n) => n.id === id)?.realPath)
+        .map((id) => lookupPool.find((n) => n.id === id)?.realPath)
         .filter((p): p is string => Boolean(p));
 
       if (sourcePaths.length > 0 && targetDir) {
@@ -956,6 +1110,7 @@ export default function App() {
               };
             })
           );
+          setNativeEmptyFolders((prev) => prev.filter((n) => !ids.includes(n.id)));
           loadNativeFolder(targetFolderId, targetDir);
           showToast(
             `Moved ${sourcePaths.length} item(s) to ${targetFolderNode?.name || 'folder'}`
@@ -1064,61 +1219,170 @@ export default function App() {
     setClipboard(null);
   };
 
+  const collectSubtreeIds = useCallback((rootIds: string[], allFiles: FileNode[]): Set<string> => {
+    const result = new Set<string>(rootIds);
+    let added = true;
+    while (added) {
+      added = false;
+      for (let i = 0; i < allFiles.length; i++) {
+        const n = allFiles[i];
+        if (n.parentId && result.has(n.parentId) && !result.has(n.id)) {
+          result.add(n.id);
+          added = true;
+        }
+      }
+    }
+    return result;
+  }, []);
+
   const handleDelete = useCallback((ids: string[], permanent = false) => {
     const currentFiles = filesRef.current;
+    const subtreeIds = collectSubtreeIds(ids, currentFiles);
     const bridge = getNativeBridge();
-    if (bridge && typeof bridge.deletePaths === 'function') {
-      const paths = ids
-        .map((id) => currentFiles.find((n) => n.id === id)?.realPath)
-        .filter((p): p is string => Boolean(p));
-      if (paths.length > 0) {
-        const ok = bridge.deletePaths(JSON.stringify(paths), !permanent);
-        if (ok) {
-          setFiles((prev) => prev.filter((n) => !ids.includes(n.id)));
-          showToast(
-            permanent
-              ? `Deleted ${paths.length} item(s)`
-              : `Moved ${paths.length} item(s) to Recycle Bin`
-          );
-          return;
+
+    if (bridge) {
+      if (!permanent && typeof bridge.moveToTrash === 'function') {
+        const payload = ids
+          .map((id) => currentFiles.find((n) => n.id === id))
+          .filter((n): n is FileNode => Boolean(n && n.realPath))
+          .map((n) => ({
+            id: n.id,
+            realPath: n.realPath,
+            parentId: n.parentId || 'internal_root',
+          }));
+
+        if (payload.length > 0) {
+          try {
+            const raw = bridge.moveToTrash(JSON.stringify(payload));
+            const trashedNodes = raw ? (JSON.parse(raw) as FileNode[]) : [];
+            if (Array.isArray(trashedNodes) && trashedNodes.length > 0) {
+              const normalized = trashedNodes.map((t) => ({
+                ...t,
+                trashed: true,
+              }));
+              setFiles((prev) => [
+                ...normalized,
+                ...prev.filter((n) => !subtreeIds.has(n.id)),
+              ]);
+              setNativeEmptyFolders((prev) => prev.filter((n) => !subtreeIds.has(n.id)));
+              showToast(`Moved ${normalized.length} item(s) to Recycle Bin`);
+              return;
+            }
+          } catch {
+            // fall through
+          }
+        }
+      }
+
+      if (permanent && typeof bridge.deletePaths === 'function') {
+        const paths = ids
+          .map((id) => currentFiles.find((n) => n.id === id)?.realPath)
+          .filter((p): p is string => Boolean(p));
+        if (paths.length > 0) {
+          const ok = bridge.deletePaths(JSON.stringify(paths), false);
+          if (ok) {
+            setFiles((prev) => prev.filter((n) => !subtreeIds.has(n.id)));
+            setNativeEmptyFolders((prev) => prev.filter((n) => !subtreeIds.has(n.id)));
+            showToast(`Permanently deleted ${paths.length} item(s) from phone`);
+            return;
+          }
         }
       }
     }
 
     if (permanent) {
-      setFiles((prev) => prev.filter((n) => !ids.includes(n.id)));
+      setFiles((prev) => prev.filter((n) => !subtreeIds.has(n.id)));
       showToast(`Permanently deleted ${ids.length} item(s)`);
     } else {
       setFiles((prev) =>
         prev.map((n) =>
-          ids.includes(n.id)
-            ? { ...n, trashed: true, originalParentId: n.parentId }
+          subtreeIds.has(n.id)
+            ? {
+                ...n,
+                trashed: true,
+                originalParentId: ids.includes(n.id) ? n.parentId : n.originalParentId ?? n.parentId,
+              }
             : n
         )
       );
       showToast(`Moved ${ids.length} item(s) to Recycle Bin`);
     }
-  }, [showToast]);
+  }, [collectSubtreeIds, showToast]);
 
   const handleRestore = useCallback((ids: string[]) => {
+    const currentFiles = filesRef.current;
+    const bridge = getNativeBridge();
+    if (bridge && typeof bridge.restoreFromTrash === 'function') {
+      const payload = ids
+        .map((id) => currentFiles.find((n) => n.id === id))
+        .filter((n): n is FileNode => Boolean(n && n.realPath))
+        .map((n) => ({
+          id: n.id,
+          realPath: n.realPath,
+          originalPath: n.originalPath || '',
+        }));
+      if (payload.length > 0) {
+        try {
+          const raw = bridge.restoreFromTrash(JSON.stringify(payload));
+          const restored = raw ? (JSON.parse(raw) as { id: string; restoredPath: string; success: boolean }[]) : [];
+          const restoredIds = new Set(restored.filter((r) => r.success).map((r) => r.id));
+          if (restoredIds.size > 0) {
+            setFiles((prev) => prev.filter((n) => !restoredIds.has(n.id)));
+            triggerAsyncCategoryScan(true);
+            loadNativeFolder('internal_root');
+            showToast(`Restored ${restoredIds.size} item(s)`);
+            return;
+          }
+        } catch {
+          // fall through
+        }
+      }
+    }
+
+    const subtreeIds = collectSubtreeIds(ids, currentFiles);
     setFiles((prev) =>
       prev.map((n) =>
-        ids.includes(n.id)
+        subtreeIds.has(n.id)
           ? {
               ...n,
               trashed: false,
-              parentId: n.originalParentId || 'internal_root',
+              parentId: ids.includes(n.id)
+                ? n.originalParentId || 'internal_root'
+                : n.parentId || n.originalParentId || 'internal_root',
             }
           : n
       )
     );
     showToast(`Restored ${ids.length} item(s)`);
-  }, [showToast]);
+  }, [collectSubtreeIds, loadNativeFolder, showToast, triggerAsyncCategoryScan]);
 
   const handleEmptyRecycleBin = useCallback(() => {
+    const currentFiles = filesRef.current;
+    const bridge = getNativeBridge();
+    if (bridge) {
+      if (typeof bridge.emptyTrash === 'function') {
+        bridge.emptyTrash();
+      } else if (typeof bridge.deletePaths === 'function') {
+        const trashedPaths = currentFiles
+          .filter((n) => n.trashed && n.realPath)
+          .map((n) => n.realPath as string);
+        if (trashedPaths.length > 0) {
+          bridge.deletePaths(JSON.stringify(trashedPaths), false);
+        }
+      }
+    }
     setFiles((prev) => prev.filter((n) => !n.trashed));
     showToast('Recycle Bin emptied');
   }, [showToast]);
+
+  const requestDeleteConfirm = useCallback((ids: string[], permanent = false) => {
+    if (ids.length === 0) return;
+    setDeleteConfirm({ ids, permanentOnly: permanent });
+  }, []);
+
+  const requestEmptyRecycleBinConfirm = useCallback(() => {
+    setDeleteConfirm({ ids: [], permanentOnly: true, isEmptyBin: true });
+  }, []);
 
   const handleBatchRenameConfirm = (renames: { id: string; newName: string }[]) => {
     const bridge = getNativeBridge();
@@ -1276,18 +1540,27 @@ export default function App() {
 
   const handleCleanEmptyFolders = useCallback((ids: string[]) => {
     const currentFiles = filesRef.current;
+    const lookupPool = [...nativeEmptyFoldersRef.current, ...currentFiles];
     const bridge = getNativeBridge();
-    if (bridge && typeof bridge.deletePaths === 'function') {
+    if (bridge) {
       const paths = ids
-        .map((id) => currentFiles.find((n) => n.id === id)?.realPath)
+        .map((id) => lookupPool.find((n) => n.id === id)?.realPath)
         .filter((p): p is string => Boolean(p));
       if (paths.length > 0) {
-        bridge.deletePaths(JSON.stringify(paths), false);
+        if (typeof bridge.deleteEmptyFolders === 'function') {
+          bridge.deleteEmptyFolders(JSON.stringify(paths));
+        } else if (typeof bridge.deletePaths === 'function') {
+          bridge.deletePaths(JSON.stringify(paths), false);
+        }
       }
     }
+    setNativeEmptyFolders((prev) => prev.filter((n) => !ids.includes(n.id)));
     setFiles((prev) => prev.filter((n) => !ids.includes(n.id)));
     showToast(`Removed ${ids.length} empty folder(s)`);
-  }, [showToast]);
+    if (isRunningInAndroidApp()) {
+      window.setTimeout(() => loadNativeEmptyFolders(), 250);
+    }
+  }, [loadNativeEmptyFolders, showToast]);
 
   const handleClearAppCache = useCallback((ids: string[]) => {
     const currentFiles = filesRef.current;
@@ -1427,7 +1700,13 @@ export default function App() {
   };
 
   const renameTargets = renameTargetIds
-    ? files.filter((f) => renameTargetIds.includes(f.id))
+    ? Array.from(
+        new Map(
+          [...files, ...nativeEmptyFolders]
+            .filter((f) => renameTargetIds.includes(f.id))
+            .map((f) => [f.id, f])
+        ).values()
+      )
     : [];
 
   const updateSwipeIndicator = useCallback((dx: number) => {
@@ -1694,9 +1973,9 @@ export default function App() {
               onCut={handleCutMemo}
               onPaste={handlePaste}
               onCancelClipboard={handleCancelClipboardMemo}
-              onDelete={handleDelete}
+              onDelete={requestDeleteConfirm}
               onRestore={handleRestore}
-              onEmptyRecycleBin={handleEmptyRecycleBin}
+              onEmptyRecycleBin={requestEmptyRecycleBinConfirm}
               onRenameRequest={handleRenameRequestMemo}
               onShare={handleShare}
               onToggleFavourite={handleToggleFavourite}
@@ -1748,9 +2027,9 @@ export default function App() {
               onCut={handleCutMemo}
               onPaste={handlePaste}
               onCancelClipboard={handleCancelClipboardMemo}
-              onDelete={handleDelete}
+              onDelete={requestDeleteConfirm}
               onRestore={handleRestore}
-              onEmptyRecycleBin={handleEmptyRecycleBin}
+              onEmptyRecycleBin={requestEmptyRecycleBinConfirm}
               onRenameRequest={handleRenameRequestMemo}
               onShare={handleShare}
               onToggleFavourite={handleToggleFavourite}
@@ -1761,11 +2040,14 @@ export default function App() {
             <AnalyzerView
               tool={activeScreen.tool}
               files={files}
+              nativeEmptyFolders={isRunningInAndroidApp() ? nativeEmptyFolders : undefined}
+              emptyFoldersLoading={emptyFoldersLoading}
               showThumbnails={settings.showThumbnails}
               onBackHome={handleBackStepMemo}
+              onRefreshEmptyFolders={isRunningInAndroidApp() ? loadNativeEmptyFolders : undefined}
               onOpenFolder={handleOpenFolderMemo}
               onOpenFile={handleOpenFile}
-              onDeleteFiles={(ids) => handleDelete(ids, false)}
+              onDeleteFiles={(ids) => requestDeleteConfirm(ids, false)}
               onCopyFiles={handleCopyMemo}
               onCutFiles={handleCutMemo}
               onMoveFiles={handleMoveRequestMemo}
@@ -1785,7 +2067,6 @@ export default function App() {
             <AboutView
               settings={settings}
               onBackHome={handleBackStepMemo}
-              onCheckUpdate={() => setUpdateModalOpen(true)}
             />
           )}
         </main>
@@ -1842,6 +2123,34 @@ export default function App() {
         onClose={() => setPropertiesNodes(null)}
       />
 
+      <DeleteConfirmDialog
+        open={Boolean(deleteConfirm)}
+        itemCount={deleteConfirm?.ids.length || 0}
+        singleItemName={
+          deleteConfirm?.ids.length === 1
+            ? (files.find((f) => f.id === deleteConfirm.ids[0]) ||
+                nativeEmptyFolders.find((f) => f.id === deleteConfirm.ids[0]))?.name
+            : undefined
+        }
+        permanentOnly={Boolean(deleteConfirm?.permanentOnly)}
+        isEmptyBin={Boolean(deleteConfirm?.isEmptyBin)}
+        onCancel={() => setDeleteConfirm(null)}
+        onMoveToBin={() => {
+          if (deleteConfirm && !deleteConfirm.isEmptyBin) {
+            handleDelete(deleteConfirm.ids, false);
+          }
+          setDeleteConfirm(null);
+        }}
+        onDeletePermanently={() => {
+          if (deleteConfirm?.isEmptyBin) {
+            handleEmptyRecycleBin();
+          } else if (deleteConfirm) {
+            handleDelete(deleteConfirm.ids, true);
+          }
+          setDeleteConfirm(null);
+        }}
+      />
+
       <FileViewerDialog
         file={viewingFile}
         onClose={() => setViewingFile(null)}
@@ -1860,6 +2169,42 @@ export default function App() {
         onSaveApkToPublicDownloads={handleSaveApkToPublicDownloads}
         onInstallCompleted={handleInstallCompleted}
       />
+
+      {apkConflictPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-xs">
+          <div
+            className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <h2 className="text-base font-semibold text-amber-600 dark:text-amber-400">
+              Reinstall Required Once
+            </h2>
+            <p className="text-sm text-slate-700 dark:text-slate-300">
+              {apkConflictPrompt.reason}
+            </p>
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setApkConflictPrompt(null)}
+                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  getNativeBridge()?.uninstallSelf?.();
+                  setApkConflictPrompt(null);
+                }}
+                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Uninstall Old App
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Point 6: Exit Confirmation Popup */}
       <ExitConfirmDialog

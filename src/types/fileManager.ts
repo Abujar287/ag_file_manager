@@ -11,6 +11,7 @@ export interface FileNode {
   favourite?: boolean;
   trashed?: boolean;
   originalParentId?: string | null;
+  originalPath?: string;
   thumbnailUrl?: string;
   mediaUrl?: string;
   content?: string;
