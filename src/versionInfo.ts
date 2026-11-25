@@ -1,5 +1,5 @@
-export const APP_VERSION_CODE = 6;
-export const APP_VERSION_NAME = '1.2.3';
+export const APP_VERSION_CODE = 7;
+export const APP_VERSION_NAME = '1.2.4';
 export const GITHUB_REPO = 'Abujar287/ag_file_manager';
 export const REMOTE_VERSION_JSON_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/version.json`;
 export const REMOTE_DOWNLOADS_BASE_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/public/downloads`;
