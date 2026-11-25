@@ -84,8 +84,8 @@ class UpdateManager(
         val progressStats = view.findViewById<TextView>(R.id.tvDownloadStats)
         val errorText = view.findViewById<TextView>(R.id.tvDownloadError)
 
-        currentVersionText.text = "Current Version: ${BuildConfig.VERSION_NAME}"
-        newVersionText.text = "New Version: ${info.versionName}"
+        currentVersionText.text = "Current Version : AG File Manager ${BuildConfig.VERSION_NAME}"
+        newVersionText.text = "New Version: AG File Manager ${info.versionName}"
         progressContainer.visibility = View.GONE
         errorText.visibility = View.GONE
 

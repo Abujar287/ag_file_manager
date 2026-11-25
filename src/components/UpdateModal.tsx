@@ -5,7 +5,6 @@ import {
   getRunningAppVersion,
   isRunningInAndroidApp,
   NativeDownloadProgress,
-  openExternalDownloadUrl,
   triggerSystemDownload,
 } from '../services/deviceStorageService';
 import {
@@ -40,6 +39,7 @@ type ModalPhase =
   | 'downloading'
   | 'permission_prompt'
   | 'installer_confirm'
+  | 'signature_conflict'
   | 'installing'
   | 'installed'
   | 'error';
@@ -135,13 +135,10 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
 
       if (!data) {
         if (isRunningInAndroidApp()) {
-          setErrorMessage(
-            'Unable to reach GitHub update server. Please check your internet connection and try again.'
-          );
+          setErrorMessage('Unable to check for updates. Please check your internet connection.');
           setPhase('error');
           return;
         }
-        // Web preview fallback
         const fallbackManifest: RemoteVersionManifest = {
           versionCode: effectiveCurrentCode,
           versionName: newVersion || effectiveCurrentName,
@@ -161,7 +158,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
       }
     };
 
-    const timer = window.setTimeout(runCheck, 250);
+    const timer = window.setTimeout(runCheck, 220);
 
     return () => {
       mounted = false;
@@ -214,12 +211,51 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           }
         }
       } catch {
-        // Cross-origin HEAD may be blocked by CORS; keep checking explicit remote URLs if local failed
+        // Cross-origin HEAD may be blocked by CORS
       }
     }
     const remoteFallback =
       candidates.find((u) => /^https?:\/\//i.test(u)) || candidates[0];
     return { url: remoteFallback, size: 0 };
+  };
+
+  const proceedAfterDownload = (resolvedPath: string) => {
+    const bridge = getNativeBridge();
+    if (bridge && typeof bridge.checkApkInstallCompatibility === 'function') {
+      try {
+        const raw = bridge.checkApkInstallCompatibility(resolvedPath);
+        const compat = JSON.parse(raw) as {
+          compatible?: boolean;
+          code?: string;
+          reason?: string;
+        };
+        if (compat && compat.compatible === false) {
+          if (compat.code === 'signature_mismatch') {
+            setErrorMessage(
+              compat.reason ||
+                `Package conflicts with the existing installation. Uninstall the older app once, then install Download/${targetFilename}.`
+            );
+            setPhase('signature_conflict');
+            return;
+          }
+          setErrorMessage(compat.reason || 'Downloaded package cannot be installed.');
+          setPhase('error');
+          return;
+        }
+      } catch {
+        // continue cleanly if JSON parsing fails
+      }
+    }
+
+    if (
+      bridge &&
+      typeof bridge.canRequestPackageInstalls === 'function' &&
+      !bridge.canRequestPackageInstalls()
+    ) {
+      setPhase('permission_prompt');
+    } else {
+      setPhase('installer_confirm');
+    }
   };
 
   const startDownload = async () => {
@@ -232,14 +268,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
     const candidates = getDownloadCandidates();
     const primaryUrl = candidates[0];
 
-    // Path A: Native Android APK — use real DownloadManager + automatic URL fallback + live progress
     if (bridge && typeof bridge.downloadWithDownloadManager === 'function') {
       const startCandidate = (idx: number) => {
         if (idx >= candidates.length) {
           clearTimers();
-          setErrorMessage(
-            'APK download failed from GitHub. Push to GitHub to publish the release APK or open via Browser / IDM.'
-          );
+          setErrorMessage('Download failed. Please check your connection and retry.');
           setPhase('error');
           return;
         }
@@ -248,7 +281,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         const dlId = triggerSystemDownload(
           candidateUrl,
           targetFilename,
-          `AG File Manager v${targetVersionName}`
+          `AG File Manager ${targetVersionName}`
         );
 
         if (dlId && typeof bridge.getDownloadProgress === 'function') {
@@ -270,24 +303,14 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
                   prog.localPath || `/storage/emulated/0/Download/${targetFilename}`;
                 setDownloadedApkPath(resolvedPath);
                 onSaveApkToPublicDownloads(targetFilename, prog.totalBytes || 4_100_000);
-                if (
-                  typeof bridge.canRequestPackageInstalls === 'function' &&
-                  !bridge.canRequestPackageInstalls()
-                ) {
-                  setPhase('permission_prompt');
-                } else {
-                  setPhase('installer_confirm');
-                }
+                proceedAfterDownload(resolvedPath);
               } else if (prog.status === 'failed') {
                 clearTimers();
                 if (idx + 1 < candidates.length) {
                   setDownloadedMb(0);
                   startCandidate(idx + 1);
                 } else {
-                  setErrorMessage(
-                    prog.reason ||
-                      'Download interrupted. Try Browser / IDM download or tap Retry.'
-                  );
+                  setErrorMessage(prog.reason || 'Download interrupted. Please try again.');
                   setPhase('error');
                 }
               }
@@ -298,16 +321,16 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           return;
         }
 
-        // Fallback if DownloadManager returned no ID (browser fallback launched externally)
+        const fallbackPath = `/storage/emulated/0/Download/${targetFilename}`;
+        setDownloadedApkPath(fallbackPath);
         onSaveApkToPublicDownloads(targetFilename, 4_100_000);
-        setPhase('installer_confirm');
+        proceedAfterDownload(fallbackPath);
       };
 
       startCandidate(0);
       return;
     }
 
-    // Path B: Web / Mobile Browser — verify APK endpoint then trigger direct download (IDM-compatible)
     try {
       const { url: chosenUrl, size: contentSize } = await resolveReachableWebUrl(candidates);
       if (contentSize > 0) {
@@ -317,27 +340,14 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         setDownloadedMb(totalMb);
       }
 
-      // Direct URL download allows Internet Download Manager (IDM) or browser DownloadManager to intercept cleanly
-      triggerSystemDownload(chosenUrl, targetFilename, `AG File Manager v${targetVersionName}`);
+      triggerSystemDownload(chosenUrl, targetFilename, `AG File Manager ${targetVersionName}`);
       onSaveApkToPublicDownloads(targetFilename, contentSize || 4_100_000);
       setPhase('installer_confirm');
     } catch {
-      triggerSystemDownload(primaryUrl, targetFilename, `AG File Manager v${targetVersionName}`);
+      triggerSystemDownload(primaryUrl, targetFilename, `AG File Manager ${targetVersionName}`);
       onSaveApkToPublicDownloads(targetFilename, 4_100_000);
       setPhase('installer_confirm');
     }
-  };
-
-  const handleOpenInBrowserOrIdm = async () => {
-    const candidates = getDownloadCandidates();
-    if (!isRunningInAndroidApp() && window.location.protocol !== 'file:') {
-      const { url } = await resolveReachableWebUrl(candidates);
-      openExternalDownloadUrl(url, targetFilename);
-      return;
-    }
-    const externalUrl =
-      candidates.find((u) => /^https?:\/\//i.test(u)) || candidates[0];
-    openExternalDownloadUrl(externalUrl, targetFilename);
   };
 
   const handleConfirmInstall = () => {
@@ -358,13 +368,12 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         return;
       }
       setErrorMessage(
-        `Could not launch installer for ${targetFilename}. Open your Download folder and tap the APK file.`
+        `Could not launch installer. Open Download/${targetFilename} to install.`
       );
       setPhase('error');
       return;
     }
 
-    // Web preview simulation of installer completion
     setPhase('installing');
     setInstallProgress(20);
     clearTimers();
@@ -387,7 +396,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
   const percent = totalMb > 0 ? Math.min(100, Math.round((downloadedMb / totalMb) * 100)) : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-xs">
       <div
         className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
         role="dialog"
@@ -405,27 +414,20 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         {phase === 'up_to_date' && (
           <div className="p-6 space-y-5">
             <div className="flex items-center gap-3">
-              <AppLogo size={36} />
+              <AppLogo size={38} />
               <div>
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                   AG File Manager
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-                  v{effectiveCurrentName} (Build {effectiveCurrentCode})
+                  Current Version : AG File Manager {effectiveCurrentName}
                 </p>
               </div>
             </div>
-            <p className="text-sm text-slate-800 dark:text-slate-200">
+            <p className="text-sm text-slate-700 dark:text-slate-300">
               You are using the latest version.
             </p>
-            <div className="flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={handleOpenInBrowserOrIdm}
-                className="min-h-[40px] px-3 py-2 rounded-xl text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40"
-              >
-                Download APK
-              </button>
+            <div className="flex justify-end">
               <button
                 type="button"
                 onClick={onClose}
@@ -440,23 +442,23 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         {(phase === 'prompt' || phase === 'downloading') && (
           <div className="p-6 space-y-5">
             <div className="flex items-center gap-3">
-              <AppLogo size={36} />
+              <AppLogo size={38} />
               <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                Update Available Now
+                New Update Available
               </h2>
             </div>
 
-            <div className="space-y-1.5 text-sm">
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 px-4 py-3 space-y-1.5 text-sm">
               <div className="text-slate-600 dark:text-slate-400 tabular-nums">
-                Current Version: {effectiveCurrentName} (Build {effectiveCurrentCode})
+                Current Version : AG File Manager {effectiveCurrentName}
               </div>
               <div className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
-                New Version: {targetVersionName} (Build {targetVersionCode})
+                New Version: AG File Manager {targetVersionName}
               </div>
             </div>
 
             {phase === 'downloading' && (
-              <div className="space-y-2 pt-1">
+              <div className="space-y-2">
                 <div className="h-2 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                   <div
                     className="h-full bg-blue-600 transition-all duration-150"
@@ -464,39 +466,30 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
                   />
                 </div>
                 <div className="text-xs font-mono text-slate-600 dark:text-slate-300 tabular-nums">
-                  {percent}% — {downloadedMb.toFixed(1)} MB / {totalMb.toFixed(1)} MB
+                  {percent}% · {downloadedMb.toFixed(1)} MB / {totalMb.toFixed(1)} MB
                 </div>
               </div>
             )}
 
-            <div className="flex items-center justify-between gap-2 pt-1">
+            <div className="flex items-center justify-end gap-2.5 pt-1">
               <button
                 type="button"
-                onClick={handleOpenInBrowserOrIdm}
-                className="min-h-[40px] px-3 py-2 rounded-xl text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
+                onClick={() => {
+                  clearTimers();
+                  onClose();
+                }}
+                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               >
-                Browser / IDM
+                Cancel
               </button>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    clearTimers();
-                    onClose();
-                  }}
-                  className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={phase === 'downloading'}
-                  onClick={startDownload}
-                  className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white transition-colors"
-                >
-                  Download
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={phase === 'downloading'}
+                onClick={startDownload}
+                className="min-h-[40px] px-5 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white transition-colors"
+              >
+                {phase === 'downloading' ? 'Downloading...' : 'Download'}
+              </button>
             </div>
           </div>
         )}
@@ -507,8 +500,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               Install Permission Required
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-400">
-              Allow AG File Manager to install updates from{' '}
-              <span className="font-mono text-xs">Download/{targetFilename}</span>.
+              Allow AG File Manager to install the downloaded update.
             </p>
             <div className="flex items-center justify-end gap-2.5 pt-2">
               <button
@@ -536,21 +528,19 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         {phase === 'installer_confirm' && (
           <div className="p-6 space-y-5">
             <div className="flex items-center gap-3">
-              <div className="shrink-0">
-                <AppLogo size={38} />
-              </div>
+              <AppLogo size={38} />
               <div className="min-w-0">
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                  AG File Manager
+                  New Update Ready
                 </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 font-mono truncate">
-                  Download/{targetFilename}
+                <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                  AG File Manager {targetVersionName}
                 </p>
               </div>
             </div>
 
             <p className="text-sm text-slate-700 dark:text-slate-300">
-              Do you want to install an update to this existing application?
+              Download complete. Tap Install to update AG File Manager.
             </p>
 
             <div className="flex items-center justify-end gap-2.5">
@@ -566,7 +556,34 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
                 onClick={handleConfirmInstall}
                 className="min-h-[40px] px-5 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
               >
-                Update
+                Install
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === 'signature_conflict' && (
+          <div className="p-6 space-y-4">
+            <h2 className="text-base font-semibold text-amber-600 dark:text-amber-400">
+              Reinstall Required Once
+            </h2>
+            <p className="text-sm text-slate-700 dark:text-slate-300">{errorMessage}</p>
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={onClose}
+                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  getNativeBridge()?.uninstallSelf?.();
+                }}
+                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Uninstall Old App
               </button>
             </div>
           </div>
@@ -575,9 +592,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         {phase === 'installing' && (
           <div className="p-6 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="shrink-0">
-                <AppLogo size={38} />
-              </div>
+              <AppLogo size={38} />
               <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
                 AG File Manager
               </div>
@@ -597,9 +612,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         {phase === 'installed' && (
           <div className="p-6 space-y-5">
             <div className="flex items-center gap-3">
-              <div className="shrink-0">
-                <AppLogo size={38} />
-              </div>
+              <AppLogo size={38} />
               <div>
                 <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
                   AG File Manager
@@ -638,30 +651,21 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
               Update Failed
             </h2>
             <p className="text-sm text-slate-700 dark:text-slate-300">{errorMessage}</p>
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-end gap-2.5">
               <button
                 type="button"
-                onClick={handleOpenInBrowserOrIdm}
-                className="min-h-[40px] px-3 py-2 rounded-xl text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40"
+                onClick={onClose}
+                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
               >
-                Browser / IDM
+                Cancel
               </button>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-                >
-                  Close
-                </button>
-                <button
-                  type="button"
-                  onClick={startDownload}
-                  className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                  Retry
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={startDownload}
+                className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Retry
+              </button>
             </div>
           </div>
         )}

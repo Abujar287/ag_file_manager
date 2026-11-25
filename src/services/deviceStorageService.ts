@@ -55,6 +55,8 @@ export interface AndroidBridgeInterface {
   getDownloadProgress?: (downloadId: string) => string;
   canRequestPackageInstalls?: () => boolean;
   requestInstallPermission?: () => void;
+  checkApkInstallCompatibility?: (localPath: string) => string;
+  uninstallSelf?: () => boolean;
   installApk?: (localPath: string) => boolean;
   exitApp?: () => void;
   openFile?: (path: string, mimeType: string) => boolean;

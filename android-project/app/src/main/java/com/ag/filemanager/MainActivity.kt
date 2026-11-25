@@ -7,6 +7,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -1341,6 +1342,128 @@ class MainActivity : Activity() {
                     }
                 }
             }
+        }
+
+        private fun extractSignatureSha256Set(pkgInfo: PackageInfo?): Set<String> {
+            if (pkgInfo == null) return emptySet()
+            return try {
+                val sigs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val si = pkgInfo.signingInfo ?: return emptySet()
+                    if (si.hasMultipleSigners()) si.apkContentsSigners else si.signingCertificateHistory
+                } else {
+                    @Suppress("DEPRECATION")
+                    pkgInfo.signatures
+                } ?: return emptySet()
+                val md = MessageDigest.getInstance("SHA-256")
+                sigs.map { sig ->
+                    md.digest(sig.toByteArray()).joinToString("") { "%02x".format(it) }
+                }.toSet()
+            } catch (_: Exception) {
+                emptySet()
+            }
+        }
+
+        @JavascriptInterface
+        fun checkApkInstallCompatibility(localPath: String): String {
+            return try {
+                val publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val requestedFile = if (localPath.isNotBlank()) File(localPath) else null
+                val apkFile = listOfNotNull(
+                    requestedFile,
+                    requestedFile?.name?.let { File(publicDownloads, it) },
+                    lastDownloadedFileName.takeIf { it.isNotBlank() }?.let { File(publicDownloads, it) }
+                ).firstOrNull { it.exists() && it.isFile && it.length() > 0L }
+                    ?: return JSONObject().apply {
+                        put("compatible", false)
+                        put("code", "missing")
+                        put("reason", "Downloaded APK file was not found in Download folder.")
+                    }.toString()
+
+                val archiveInfo: PackageInfo? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    packageManager.getPackageArchiveInfo(
+                        apkFile.absolutePath,
+                        PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
+                    )
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    @Suppress("DEPRECATION")
+                    packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+                } else {
+                    @Suppress("DEPRECATION")
+                    packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.GET_SIGNATURES)
+                }
+
+                if (archiveInfo == null || archiveInfo.packageName != BuildConfig.APPLICATION_ID) {
+                    return JSONObject().apply {
+                        put("compatible", false)
+                        put("code", "invalid")
+                        put("reason", "Downloaded APK is invalid or belongs to a different package.")
+                    }.toString()
+                }
+
+                val installedInfo: PackageInfo? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    packageManager.getPackageInfo(
+                        packageName,
+                        PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
+                    )
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    @Suppress("DEPRECATION")
+                    packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                } else {
+                    @Suppress("DEPRECATION")
+                    packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+                }
+
+                val installedCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    installedInfo?.longVersionCode ?: BuildConfig.VERSION_CODE.toLong()
+                } else {
+                    @Suppress("DEPRECATION")
+                    (installedInfo?.versionCode ?: BuildConfig.VERSION_CODE).toLong()
+                }
+                val archiveCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    archiveInfo.longVersionCode
+                } else {
+                    @Suppress("DEPRECATION")
+                    archiveInfo.versionCode.toLong()
+                }
+
+                if (archiveCode < installedCode) {
+                    return JSONObject().apply {
+                        put("compatible", false)
+                        put("code", "downgrade")
+                        put("reason", "Downloaded version (Build $archiveCode) is older than installed version (Build $installedCode).")
+                    }.toString()
+                }
+
+                val installedSigs = extractSignatureSha256Set(installedInfo)
+                val archiveSigs = extractSignatureSha256Set(archiveInfo)
+                if (installedSigs.isNotEmpty() && archiveSigs.isNotEmpty() &&
+                    installedSigs.intersect(archiveSigs).isEmpty()
+                ) {
+                    return JSONObject().apply {
+                        put("compatible", false)
+                        put("code", "signature_mismatch")
+                        put(
+                            "reason",
+                            "The installed version uses a different signing key. Uninstall the old app once, then install ${apkFile.name} from Download."
+                        )
+                    }.toString()
+                }
+
+                JSONObject().apply {
+                    put("compatible", true)
+                    put("code", "ok")
+                }.toString()
+            } catch (_: Exception) {
+                JSONObject().apply {
+                    put("compatible", true)
+                    put("code", "ok")
+                }.toString()
+            }
+        }
+
+        @JavascriptInterface
+        fun uninstallSelf(): Boolean {
+            return uninstallApp(packageName)
         }
 
         @JavascriptInterface
