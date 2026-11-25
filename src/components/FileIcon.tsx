@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Archive,
   Camera,
@@ -14,15 +14,21 @@ import {
   Image as ImageIcon,
   Music,
   Package,
+  Play,
   Video,
 } from 'lucide-react';
 import { FileNode } from '../types/fileManager';
 import { FolderBadgeKind } from '../utils/formatters';
+import {
+  getCachedNativeMediaThumbnail,
+  isRunningInAndroidApp,
+  requestNativeMediaThumbnail,
+} from '../services/deviceStorageService';
 
 interface FileIconProps {
   node: FileNode;
   showThumbnails: boolean;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'fill';
   folderMeta?: {
     isEmpty: boolean;
     badgeKind: FolderBadgeKind;
@@ -61,23 +67,88 @@ export const FileIcon: React.FC<FileIconProps> = ({
   folderMeta,
 }) => {
   const [imgError, setImgError] = useState(false);
+  const [videoError, setVideoError] = useState(false);
+  const [lazyThumbUrl, setLazyThumbUrl] = useState<string | null>(() =>
+    getCachedNativeMediaThumbnail(node.realPath) ?? null
+  );
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setImgError(false);
+    setVideoError(false);
+    setLazyThumbUrl(getCachedNativeMediaThumbnail(node.realPath) ?? null);
+  }, [node.id, node.thumbnailUrl, node.realPath]);
+
+  const needsNativeLazyThumb =
+    showThumbnails &&
+    (node.kind === 'video' || node.kind === 'image') &&
+    !node.thumbnailUrl &&
+    !lazyThumbUrl &&
+    Boolean(node.realPath) &&
+    isRunningInAndroidApp();
+
+  useEffect(() => {
+    if (!needsNativeLazyThumb || !node.realPath) return;
+    const targetPath = node.realPath;
+    const cached = getCachedNativeMediaThumbnail(targetPath);
+    if (cached !== undefined) {
+      if (cached) setLazyThumbUrl(cached);
+      return;
+    }
+
+    let cancelled = false;
+    const el = containerRef.current;
+
+    const triggerLoad = () => {
+      requestNativeMediaThumbnail(targetPath).then((url) => {
+        if (!cancelled && url) {
+          setLazyThumbUrl(url);
+        }
+      });
+    };
+
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      triggerLoad();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          observer.disconnect();
+          triggerLoad();
+        }
+      },
+      { rootMargin: '180px' }
+    );
+    observer.observe(el);
+
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [needsNativeLazyThumb, node.realPath]);
 
   const boxClass =
-    size === 'lg'
-      ? 'w-14 h-14 rounded-xl'
-      : size === 'sm'
-        ? 'w-9 h-9 rounded-lg'
-        : 'w-11 h-11 rounded-xl';
+    size === 'fill'
+      ? 'w-full h-full'
+      : size === 'lg'
+        ? 'w-14 h-14 rounded-xl'
+        : size === 'sm'
+          ? 'w-9 h-9 rounded-lg'
+          : 'w-11 h-11 rounded-xl';
 
-  const iconSize = size === 'lg' ? 28 : size === 'sm' ? 18 : 20;
+  const iconSize = size === 'fill' ? 36 : size === 'lg' ? 28 : size === 'sm' ? 18 : 20;
 
   // Demo-matched Blue Android Folder Icon
   if (node.kind === 'folder') {
     const isEmpty = folderMeta ? folderMeta.isEmpty : true;
     const badgeKind = folderMeta ? folderMeta.badgeKind : 'none';
     const hasThumb = showThumbnails && !isEmpty && Boolean(folderMeta?.previewThumbUrl);
-    const svgW = size === 'lg' ? 52 : size === 'sm' ? 34 : 44;
-    const svgH = size === 'lg' ? 44 : size === 'sm' ? 29 : 38;
+    const svgW = size === 'fill' ? 68 : size === 'lg' ? 52 : size === 'sm' ? 34 : 44;
+    const svgH = size === 'fill' ? 56 : size === 'lg' ? 44 : size === 'sm' ? 29 : 38;
 
     return (
       <div
@@ -150,20 +221,67 @@ export const FileIcon: React.FC<FileIconProps> = ({
     );
   }
 
+  const effectiveThumbUrl =
+    node.thumbnailUrl ||
+    lazyThumbUrl ||
+    (node.kind === 'image' ? node.mediaUrl : undefined);
+
   // Normal File Thumbnail when Show Thumbnails is enabled
-  if (showThumbnails && node.thumbnailUrl && !imgError) {
+  if (showThumbnails && effectiveThumbUrl && !imgError) {
+    const playBadgeSize = size === 'fill' ? 28 : size === 'lg' ? 20 : size === 'sm' ? 14 : 16;
+    const playIconSize = size === 'fill' ? 14 : size === 'lg' ? 10 : size === 'sm' ? 8 : 9;
     return (
       <div
-        className={`${boxClass} shrink-0 overflow-hidden bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700/80`}
+        ref={containerRef}
+        className={`${boxClass} shrink-0 relative overflow-hidden bg-slate-100 dark:bg-slate-800 ${
+          size === 'fill' ? '' : 'border border-slate-200/80 dark:border-slate-700/80'
+        }`}
       >
         <img
-          src={node.thumbnailUrl}
+          src={effectiveThumbUrl}
           alt={node.name}
           loading="lazy"
           referrerPolicy="no-referrer"
           onError={() => setImgError(true)}
           className="w-full h-full object-cover"
         />
+        {node.kind === 'video' && (
+          <span
+            style={{ width: playBadgeSize, height: playBadgeSize }}
+            className="absolute inset-0 m-auto rounded-full bg-black/55 backdrop-blur-[1px] text-white flex items-center justify-center shadow-xs pointer-events-none"
+          >
+            <Play size={playIconSize} fill="currentColor" className="ml-0.5" />
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  // Browser fallback preview frame for local/uploaded videos when no pre-rendered thumbnail exists
+  if (showThumbnails && node.kind === 'video' && node.mediaUrl && !videoError) {
+    const playBadgeSize = size === 'fill' ? 28 : size === 'lg' ? 20 : size === 'sm' ? 14 : 16;
+    const playIconSize = size === 'fill' ? 14 : size === 'lg' ? 10 : size === 'sm' ? 8 : 9;
+    return (
+      <div
+        ref={containerRef}
+        className={`${boxClass} shrink-0 relative overflow-hidden bg-slate-900 ${
+          size === 'fill' ? '' : 'border border-slate-200/80 dark:border-slate-700/80'
+        }`}
+      >
+        <video
+          src={`${node.mediaUrl}#t=0.5`}
+          preload="metadata"
+          muted
+          playsInline
+          onError={() => setVideoError(true)}
+          className="w-full h-full object-cover pointer-events-none"
+        />
+        <span
+          style={{ width: playBadgeSize, height: playBadgeSize }}
+          className="absolute inset-0 m-auto rounded-full bg-black/55 text-white flex items-center justify-center shadow-xs pointer-events-none"
+        >
+          <Play size={playIconSize} fill="currentColor" className="ml-0.5" />
+        </span>
       </div>
     );
   }
@@ -172,6 +290,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
     case 'image':
       return (
         <div
+          ref={containerRef}
           className={`${boxClass} shrink-0 flex items-center justify-center bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400`}
         >
           <FileImage size={iconSize} />
@@ -180,6 +299,7 @@ export const FileIcon: React.FC<FileIconProps> = ({
     case 'video':
       return (
         <div
+          ref={containerRef}
           className={`${boxClass} shrink-0 flex items-center justify-center bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400`}
         >
           <FileVideo size={iconSize} />

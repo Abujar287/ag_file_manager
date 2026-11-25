@@ -29,7 +29,7 @@ interface AnalyzerViewProps {
   onBackHome: () => void;
   onRefreshEmptyFolders?: () => void;
   onOpenFolder: (folderId: string) => void;
-  onOpenFile: (file: FileNode) => void;
+  onOpenFile: (file: FileNode, contextList?: FileNode[]) => void;
   onDeleteFiles: (ids: string[]) => void;
   onCopyFiles: (ids: string[]) => void;
   onCutFiles: (ids: string[]) => void;
@@ -79,76 +79,77 @@ const AnalyzerFileRow: React.FC<SelectableRowProps> = ({
   return (
     <div
       onClick={() => (isSelecting ? onToggleSelect(node.id) : onPrimaryClick(node))}
-      className={`px-4 py-3 flex items-center justify-between gap-2.5 cursor-pointer select-none transition-colors ${
+      className={`px-3.5 sm:px-4 py-3 flex items-center gap-3 cursor-pointer select-none transition-colors ${
         selected
           ? 'bg-blue-50/90 dark:bg-blue-950/40'
           : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
       }`}
     >
-      <div className="flex items-center gap-3 min-w-0 flex-1">
-        <FileIcon node={node} showThumbnails={showThumbnails} size="sm" />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
-            {node.name}
+      <FileIcon node={node} showThumbnails={showThumbnails} size="md" />
+
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-slate-900 dark:text-slate-100 break-words leading-snug line-clamp-2">
+          {node.name}
+        </div>
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <div className="min-w-0 flex-1 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+            {rightText && (
+              <span className="font-semibold text-slate-700 dark:text-slate-300 shrink-0">
+                {rightText}
+              </span>
+            )}
+            {rightText && subtitle && <span className="shrink-0">·</span>}
+            <span className="truncate">{subtitle}</span>
           </div>
-          <div className="text-xs text-slate-500 dark:text-slate-400 truncate mt-0.5 tabular-nums">
-            {subtitle}
-          </div>
+
+          {!isSelecting && (
+            <div className="flex items-center gap-0.5 shrink-0">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onMoveSingle(node.id);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40"
+                aria-label={`Move ${node.name}`}
+                title="Move"
+              >
+                <FolderInput size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteSingle(node.id);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                aria-label={`Delete ${node.name}`}
+                title="Delete"
+              >
+                <Trash2 size={15} />
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0">
-        {rightText && (
-          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 tabular-nums mr-1">
-            {rightText}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleSelect(node.id);
+        }}
+        aria-label={`Select ${node.name}`}
+        className="min-w-[28px] min-h-[28px] flex items-center justify-center shrink-0"
+      >
+        {selected ? (
+          <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center">
+            <Check size={12} strokeWidth={3} />
           </span>
+        ) : (
+          <span className="w-3.5 h-3.5 rounded-full border-2 border-slate-300 dark:border-slate-600 hover:border-blue-500 transition-colors" />
         )}
-        {!isSelecting && (
-          <>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onMoveSingle(node.id);
-              }}
-              className="p-2 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40"
-              aria-label={`Move ${node.name}`}
-              title="Move"
-            >
-              <FolderInput size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteSingle(node.id);
-              }}
-              className="p-2 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
-              aria-label={`Delete ${node.name}`}
-              title="Delete"
-            >
-              <Trash2 size={16} />
-            </button>
-          </>
-        )}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleSelect(node.id);
-          }}
-          aria-label={`Select ${node.name}`}
-          className="min-w-[28px] min-h-[28px] flex items-center justify-center shrink-0"
-        >
-          {selected ? (
-            <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center">
-              <Check size={12} strokeWidth={3} />
-            </span>
-          ) : (
-            <span className="w-3 h-3 rounded-full bg-slate-300 dark:bg-slate-700 hover:bg-blue-500 transition-colors" />
-          )}
-        </button>
-      </div>
+      </button>
     </div>
   );
 };
@@ -499,7 +500,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                             showThumbnails={showThumbnails}
                             subtitle={getNodePath(file.parentId || 'internal_root', files)}
                             rightText={formatBytes(file.size)}
-                            onPrimaryClick={onOpenFile}
+                            onPrimaryClick={(item) => onOpenFile(item, g.items)}
                             onToggleSelect={toggleSelect}
                             onMoveSingle={(id) => onMoveFiles([id])}
                             onDeleteSingle={(id) => onDeleteFiles([id])}
@@ -533,7 +534,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                 showThumbnails={showThumbnails}
                 subtitle={getNodePath(file.parentId || 'internal_root', files)}
                 rightText={formatBytes(file.size)}
-                onPrimaryClick={onOpenFile}
+                onPrimaryClick={(item) => onOpenFile(item, largeFiles)}
                 onToggleSelect={toggleSelect}
                 onMoveSingle={(id) => onMoveFiles([id])}
                 onDeleteSingle={(id) => onDeleteFiles([id])}
@@ -560,7 +561,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                 isSelecting={isSelecting}
                 showThumbnails={showThumbnails}
                 subtitle={`${formatBytes(file.size)} · ${formatDateTime(file.modifiedAt)}`}
-                onPrimaryClick={onOpenFile}
+                onPrimaryClick={(item) => onOpenFile(item, recentFiles)}
                 onToggleSelect={toggleSelect}
                 onMoveSingle={(id) => onMoveFiles([id])}
                 onDeleteSingle={(id) => onDeleteFiles([id])}
@@ -671,7 +672,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                   showThumbnails={showThumbnails}
                   subtitle={getNodePath(c.parentId || 'internal_root', files)}
                   rightText={formatBytes(c.size)}
-                  onPrimaryClick={onOpenFile}
+                  onPrimaryClick={(item) => onOpenFile(item, cacheFiles)}
                   onToggleSelect={toggleSelect}
                   onMoveSingle={(id) => onMoveFiles([id])}
                   onDeleteSingle={(id) => onClearAppCache([id])}
@@ -718,7 +719,7 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = ({
                       isSelecting={isSelecting}
                       showThumbnails={showThumbnails}
                       subtitle={getNodePath(item.parentId || 'internal_root', files)}
-                      onPrimaryClick={onOpenFile}
+                      onPrimaryClick={(item) => onOpenFile(item, duplicateGroups.flat())}
                       onToggleSelect={toggleSelect}
                       onMoveSingle={(id) => onMoveFiles([id])}
                       onDeleteSingle={(id) => onDeleteFiles([id])}

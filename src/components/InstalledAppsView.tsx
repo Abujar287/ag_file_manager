@@ -15,6 +15,7 @@ import {
 import { InstalledApp } from '../types/fileManager';
 import { formatBytes } from '../utils/formatters';
 import {
+  hasNativeMultiUninstall,
   isRunningInAndroidApp,
   launchInstalledApp,
   openInstalledAppDetails,
@@ -53,8 +54,36 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const fallbackUninstallQueueRef = useRef<string[]>([]);
 
   const inAndroid = isRunningInAndroidApp();
+
+  // JS-side sequential uninstall fallback when running on older native bridges without uninstallApps()
+  useEffect(() => {
+    const advanceFallbackQueue = () => {
+      if (fallbackUninstallQueueRef.current.length === 0) return;
+      const nextPkg = fallbackUninstallQueueRef.current.shift();
+      if (nextPkg) {
+        window.setTimeout(() => {
+          uninstallInstalledApp(nextPkg);
+        }, 180);
+      }
+    };
+
+    const onFocus = () => {
+      advanceFallbackQueue();
+    };
+    const onAppsChanged = () => {
+      advanceFallbackQueue();
+    };
+
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('android_apps_changed', onAppsChanged);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('android_apps_changed', onAppsChanged);
+    };
+  }, []);
 
   // Prune packages that were uninstalled
   useEffect(() => {
@@ -150,15 +179,32 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
       onShowToast('Uninstalling apps is available inside Android APK');
       return;
     }
-    const ok = uninstallInstalledApps(selectedPackages);
+
+    const targets = [...selectedPackages];
+    if (targets.length === 1 || hasNativeMultiUninstall()) {
+      const ok = uninstallInstalledApps(targets);
+      if (ok) {
+        onShowToast(
+          targets.length === 1
+            ? 'Confirm uninstall on device prompt'
+            : `Starting sequential uninstall for ${targets.length} apps`
+        );
+        setSelectedPackages([]);
+      } else {
+        onShowToast('Unable to start app uninstall');
+      }
+      return;
+    }
+
+    // Fallback sequential queue using single uninstallApp() calls
+    const [firstPkg, ...restPkgs] = targets;
+    fallbackUninstallQueueRef.current = restPkgs;
+    const ok = uninstallInstalledApp(firstPkg);
     if (ok) {
-      onShowToast(
-        selectedPackages.length === 1
-          ? 'Confirm uninstall on device prompt'
-          : `Starting uninstall for ${selectedPackages.length} selected apps`
-      );
+      onShowToast(`Starting sequential uninstall for ${targets.length} apps`);
       setSelectedPackages([]);
     } else {
+      fallbackUninstallQueueRef.current = [];
       onShowToast('Unable to start app uninstall');
     }
   };
@@ -415,7 +461,7 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
                       <Check size={12} strokeWidth={3} />
                     </span>
                   ) : (
-                    <span className="w-3 h-3 rounded-full bg-slate-300 dark:bg-slate-700 hover:bg-blue-500 transition-colors" />
+                    <span className="w-4 h-4 rounded-full border-2 border-slate-300 dark:border-slate-600 hover:border-blue-500 transition-colors" />
                   )}
                 </button>
               </div>

@@ -77,6 +77,7 @@ export interface AndroidBridgeInterface {
   openAppDetails?: (packageName: string) => boolean;
   uninstallApp?: (packageName: string) => boolean;
   uninstallApps?: (packagesJson: string) => boolean;
+  getMediaThumbnailAsync?: (requestId: string, path: string) => void;
 }
 
 declare global {
@@ -378,6 +379,11 @@ export function uninstallInstalledApp(packageName: string): boolean {
   return false;
 }
 
+export function hasNativeMultiUninstall(): boolean {
+  const bridge = getNativeBridge();
+  return Boolean(bridge && typeof bridge.uninstallApps === 'function');
+}
+
 export function uninstallInstalledApps(packageNames: string[]): boolean {
   if (packageNames.length === 0) return false;
   const bridge = getNativeBridge();
@@ -392,6 +398,65 @@ export function uninstallInstalledApps(packageNames: string[]): boolean {
     return uninstallInstalledApp(packageNames[0]);
   }
   return false;
+}
+
+const nativeThumbCache = new Map<string, string | null>();
+const pendingThumbListeners = new Map<string, Array<(url: string | null) => void>>();
+let thumbListenerInitialized = false;
+
+function ensureThumbEventListener() {
+  if (thumbListenerInitialized || typeof window === 'undefined') return;
+  thumbListenerInitialized = true;
+  window.addEventListener('android_thumb_result', (ev: Event) => {
+    const detail = (ev as CustomEvent).detail as {
+      requestId?: string;
+      path?: string;
+      thumbnailUrl?: string;
+    };
+    const path = detail?.path;
+    if (!path) return;
+    const url = detail.thumbnailUrl ? detail.thumbnailUrl : null;
+    nativeThumbCache.set(path, url);
+    const waiters = pendingThumbListeners.get(path);
+    if (waiters) {
+      pendingThumbListeners.delete(path);
+      waiters.forEach((cb) => cb(url));
+    }
+  });
+}
+
+export function getCachedNativeMediaThumbnail(path?: string): string | null | undefined {
+  if (!path) return undefined;
+  return nativeThumbCache.get(path);
+}
+
+export function requestNativeMediaThumbnail(path: string): Promise<string | null> {
+  if (!path) return Promise.resolve(null);
+  if (nativeThumbCache.has(path)) {
+    return Promise.resolve(nativeThumbCache.get(path) ?? null);
+  }
+  const bridge = getNativeBridge();
+  if (!bridge || typeof bridge.getMediaThumbnailAsync !== 'function') {
+    return Promise.resolve(null);
+  }
+  ensureThumbEventListener();
+
+  return new Promise((resolve) => {
+    const existing = pendingThumbListeners.get(path);
+    if (existing) {
+      existing.push(resolve);
+      return;
+    }
+    pendingThumbListeners.set(path, [resolve]);
+    const reqId = `thumb_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    try {
+      bridge.getMediaThumbnailAsync!(reqId, path);
+    } catch {
+      const waiters = pendingThumbListeners.get(path);
+      pendingThumbListeners.delete(path);
+      waiters?.forEach((cb) => cb(null));
+    }
+  });
 }
 
 export type { InstalledApp };

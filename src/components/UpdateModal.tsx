@@ -457,38 +457,40 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
   const percent = totalMb > 0 ? Math.min(100, Math.round((downloadedMb / totalMb) * 100)) : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-xs">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/55 backdrop-blur-xs">
       <div
-        className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+        className="w-full max-w-md max-h-[90vh] overflow-y-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl"
         role="dialog"
         aria-modal="true"
       >
         {phase === 'checking' && (
-          <div className="p-6 text-center space-y-3">
+          <div className="p-5 sm:p-6 text-center space-y-3">
             <div className="w-7 h-7 mx-auto rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-            <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300 break-words leading-relaxed">
               Checking for updates...
             </p>
           </div>
         )}
 
         {phase === 'up_to_date' && (
-          <div className="p-6 space-y-5">
-            <div className="flex items-center gap-3">
-              <AppLogo size={38} />
-              <div>
-                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+          <div className="p-5 sm:p-6 space-y-4">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="shrink-0 pt-0.5">
+                <AppLogo size={38} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 break-words leading-snug">
                   AG File Manager
                 </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-                  Current Version : AG File Manager {effectiveCurrentName}
+                <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums break-words leading-relaxed mt-0.5">
+                  Current Version: AG File Manager {effectiveCurrentName}
                 </p>
               </div>
             </div>
-            <p className="text-sm text-slate-700 dark:text-slate-300">
+            <p className="text-sm text-slate-700 dark:text-slate-300 break-words leading-relaxed">
               You are using the latest version.
             </p>
-            <div className="flex justify-end">
+            <div className="flex flex-wrap justify-end gap-2">
               <button
                 type="button"
                 onClick={onClose}
@@ -501,20 +503,30 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         )}
 
         {(phase === 'prompt' || phase === 'downloading') && (
-          <div className="p-6 space-y-5">
-            <div className="flex items-center gap-3">
-              <AppLogo size={38} />
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+          <div className="p-5 sm:p-6 space-y-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="shrink-0">
+                <AppLogo size={38} />
+              </div>
+              <h2 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-slate-100 min-w-0 flex-1 break-words leading-snug">
                 New Update Available
               </h2>
             </div>
 
-            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 px-4 py-3 space-y-1.5 text-sm">
-              <div className="text-slate-600 dark:text-slate-400 tabular-nums">
-                Current Version : AG File Manager {effectiveCurrentName}
+            <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 px-3.5 py-3 space-y-2 text-sm">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 text-slate-600 dark:text-slate-400">
+                <span className="text-xs font-medium shrink-0">Current Version</span>
+                <span className="tabular-nums break-words text-right font-medium text-slate-800 dark:text-slate-200">
+                  AG File Manager {effectiveCurrentName}
+                </span>
               </div>
-              <div className="font-semibold text-slate-900 dark:text-slate-100 tabular-nums">
-                New Version: AG File Manager {targetVersionName}
+              <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5 border-t border-slate-200/70 dark:border-slate-700/60 pt-2">
+                <span className="text-xs font-medium text-slate-600 dark:text-slate-400 shrink-0">
+                  New Version
+                </span>
+                <span className="font-semibold text-blue-600 dark:text-blue-400 tabular-nums break-words text-right">
+                  AG File Manager {targetVersionName}
+                </span>
               </div>
             </div>
 
@@ -526,13 +538,13 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
                     style={{ width: `${percent}%` }}
                   />
                 </div>
-                <div className="text-xs font-mono text-slate-600 dark:text-slate-300 tabular-nums">
+                <div className="text-xs font-mono text-slate-600 dark:text-slate-300 tabular-nums break-words leading-relaxed">
                   {percent}% · {downloadedMb.toFixed(1)} MB / {totalMb.toFixed(1)} MB
                 </div>
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-2.5 pt-1">
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={() => {
@@ -556,14 +568,14 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         )}
 
         {phase === 'permission_prompt' && (
-          <div className="p-6 space-y-4">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+          <div className="p-5 sm:p-6 space-y-4">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 break-words leading-snug">
               Install Permission Required
             </h2>
-            <p className="text-sm text-slate-600 dark:text-slate-400">
+            <p className="text-sm text-slate-600 dark:text-slate-400 break-words leading-relaxed">
               Allow AG File Manager to install the downloaded update.
             </p>
-            <div className="flex items-center justify-end gap-2.5 pt-2">
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-2">
               <button
                 type="button"
                 onClick={onClose}
@@ -580,31 +592,33 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
                 }}
                 className="min-h-[40px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
               >
-                Allow & Continue
+                Allow &amp; Continue
               </button>
             </div>
           </div>
         )}
 
         {phase === 'installer_confirm' && (
-          <div className="p-6 space-y-5">
-            <div className="flex items-center gap-3">
-              <AppLogo size={38} />
-              <div className="min-w-0">
-                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+          <div className="p-5 sm:p-6 space-y-4">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="shrink-0 pt-0.5">
+                <AppLogo size={38} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 break-words leading-snug">
                   New Update Ready
                 </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                <p className="text-xs text-slate-500 dark:text-slate-400 tabular-nums break-words leading-relaxed mt-0.5">
                   AG File Manager {targetVersionName}
                 </p>
               </div>
             </div>
 
-            <p className="text-sm text-slate-700 dark:text-slate-300">
+            <p className="text-sm text-slate-700 dark:text-slate-300 break-words leading-relaxed">
               Download complete. Tap Install to update AG File Manager.
             </p>
 
-            <div className="flex items-center justify-end gap-2.5">
+            <div className="flex flex-wrap items-center justify-end gap-2.5">
               <button
                 type="button"
                 onClick={onClose}
@@ -624,12 +638,14 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         )}
 
         {phase === 'signature_conflict' && (
-          <div className="p-6 space-y-4">
-            <h2 className="text-base font-semibold text-amber-600 dark:text-amber-400">
+          <div className="p-5 sm:p-6 space-y-4">
+            <h2 className="text-base font-semibold text-amber-600 dark:text-amber-400 break-words leading-snug">
               Reinstall Required Once
             </h2>
-            <p className="text-sm text-slate-700 dark:text-slate-300">{errorMessage}</p>
-            <div className="flex items-center justify-end gap-2.5 pt-1">
+            <p className="text-sm text-slate-700 dark:text-slate-300 break-words leading-relaxed">
+              {errorMessage}
+            </p>
+            <div className="flex flex-wrap items-center justify-end gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={onClose}
@@ -651,10 +667,12 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         )}
 
         {phase === 'installing' && (
-          <div className="p-6 space-y-4">
-            <div className="flex items-center gap-3">
-              <AppLogo size={38} />
-              <div className="text-base font-semibold text-slate-900 dark:text-slate-100">
+          <div className="p-5 sm:p-6 space-y-4">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="shrink-0">
+                <AppLogo size={38} />
+              </div>
+              <div className="text-base font-semibold text-slate-900 dark:text-slate-100 min-w-0 flex-1 break-words">
                 AG File Manager
               </div>
             </div>
@@ -671,20 +689,22 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         )}
 
         {phase === 'installed' && (
-          <div className="p-6 space-y-5">
-            <div className="flex items-center gap-3">
-              <AppLogo size={38} />
-              <div>
-                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+          <div className="p-5 sm:p-6 space-y-4">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="shrink-0 pt-0.5">
+                <AppLogo size={38} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100 break-words leading-snug">
                   AG File Manager
                 </h2>
-                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                <p className="text-xs text-emerald-600 dark:text-emerald-400 font-medium break-words leading-relaxed mt-0.5">
                   App installed · v{targetVersionName}
                 </p>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2.5">
+            <div className="flex flex-wrap items-center justify-end gap-2.5">
               <button
                 type="button"
                 onClick={() => {
@@ -707,12 +727,14 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         )}
 
         {phase === 'error' && (
-          <div className="p-6 space-y-4">
-            <h2 className="text-base font-semibold text-rose-600 dark:text-rose-400">
+          <div className="p-5 sm:p-6 space-y-4">
+            <h2 className="text-base font-semibold text-rose-600 dark:text-rose-400 break-words leading-snug">
               Update Failed
             </h2>
-            <p className="text-sm text-slate-700 dark:text-slate-300">{errorMessage}</p>
-            <div className="flex items-center justify-end gap-2.5">
+            <p className="text-sm text-slate-700 dark:text-slate-300 break-words leading-relaxed">
+              {errorMessage}
+            </p>
+            <div className="flex flex-wrap items-center justify-end gap-2.5">
               <button
                 type="button"
                 onClick={onClose}

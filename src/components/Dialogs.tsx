@@ -1,14 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   Code2,
+  Download,
   Edit3,
   ExternalLink,
   File as FileGlyph,
   FileText,
   Music,
   RotateCcw,
+  Share2,
   Trash2,
   WrapText,
   X,
@@ -24,6 +27,7 @@ import {
   getNodePath,
 } from '../utils/formatters';
 import { getNativeBridge, isRunningInAndroidApp } from '../services/deviceStorageService';
+import { FileIcon } from './FileIcon';
 
 interface NewItemDialogProps {
   type: 'folder' | 'text' | 'file' | null;
@@ -269,22 +273,31 @@ export const PropertiesDialog: React.FC<PropertiesDialogProps> = ({
 
 interface FileViewerDialogProps {
   file: FileNode | null;
+  galleryFiles?: FileNode[];
+  onSelectFile?: (file: FileNode) => void;
   onClose: () => void;
   onSaveText: (id: string, content: string) => void;
   onDownloadFile: (file: FileNode) => void;
   onOpenExternal?: (file: FileNode) => void;
+  onShareFile?: (file: FileNode) => void;
+  onDeleteFile?: (file: FileNode) => void;
 }
 
 export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
   file,
+  galleryFiles,
+  onSelectFile,
   onClose,
   onSaveText,
   onDownloadFile,
   onOpenExternal,
+  onShareFile,
+  onDeleteFile,
 }) => {
   const [textDraft, setTextDraft] = useState('');
   const [textEditMode, setTextEditMode] = useState(false);
   const [wordWrap, setWordWrap] = useState(true);
+  const [showOverlay, setShowOverlay] = useState(true);
 
   // Image zoom & pan state
   const [zoom, setZoom] = useState(1);
@@ -295,6 +308,12 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
     startY: 0,
     origX: 0,
     origY: 0,
+  });
+  const swipeNavRef = useRef<{ active: boolean; startX: number; startY: number; dx: number }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    dx: 0,
   });
   const pinchDistRef = useRef<number | null>(null);
   const pinchBaseZoomRef = useRef<number>(1);
@@ -309,16 +328,61 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
 
   const isPdf = Boolean(file && file.name.toLowerCase().endsWith('.pdf'));
 
+  const mediaSiblings = useMemo(() => {
+    if (!file) return [];
+    const list = (galleryFiles || []).filter(
+      (n) => !n.trashed && (n.kind === 'image' || n.kind === 'video')
+    );
+    if (list.length === 0) return [file];
+    if (!list.some((n) => n.id === file.id)) return [file, ...list];
+    return list;
+  }, [file, galleryFiles]);
+
+  const currentMediaIndex = useMemo(() => {
+    if (!file) return -1;
+    return mediaSiblings.findIndex((n) => n.id === file.id);
+  }, [file, mediaSiblings]);
+
+  const goPrevMedia = () => {
+    if (!onSelectFile || mediaSiblings.length <= 1 || currentMediaIndex <= 0) return;
+    onSelectFile(mediaSiblings[currentMediaIndex - 1]);
+  };
+
+  const goNextMedia = () => {
+    if (
+      !onSelectFile ||
+      mediaSiblings.length <= 1 ||
+      currentMediaIndex < 0 ||
+      currentMediaIndex >= mediaSiblings.length - 1
+    ) {
+      return;
+    }
+    onSelectFile(mediaSiblings[currentMediaIndex + 1]);
+  };
+
   useEffect(() => {
     setTextDraft(file?.content || '');
     setTextEditMode(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
+    setShowOverlay(true);
     setPdfPageCount(0);
     setPdfPageIndex(0);
     setPdfPageDataUrl(null);
     setPdfZoom(1);
   }, [file]);
+
+  // Keyboard navigation in Gallery Viewer
+  useEffect(() => {
+    if (!file || (file.kind !== 'image' && file.kind !== 'video')) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') goPrevMedia();
+      else if (e.key === 'ArrowRight') goNextMedia();
+      else if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  });
 
   // Load PDF page count and initial page on Android via PdfRenderer
   useEffect(() => {
@@ -385,9 +449,10 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
       pinchDistRef.current = Math.hypot(dx, dy);
       pinchBaseZoomRef.current = zoom;
       dragRef.current.active = false;
+      swipeNavRef.current.active = false;
     } else if (e.touches.length === 1) {
       const now = Date.now();
-      if (now - lastTapRef.current < 280) {
+      if (isImage && now - lastTapRef.current < 280) {
         if (zoom > 1.1) {
           setZoom(1);
           setPan({ x: 0, y: 0 });
@@ -395,10 +460,11 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
           setZoom(2.4);
         }
         lastTapRef.current = 0;
+        swipeNavRef.current.active = false;
         return;
       }
       lastTapRef.current = now;
-      if (zoom > 1) {
+      if (isImage && zoom > 1) {
         dragRef.current = {
           active: true,
           startX: e.touches[0].clientX,
@@ -406,33 +472,325 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
           origX: pan.x,
           origY: pan.y,
         };
+        swipeNavRef.current.active = false;
+      } else {
+        swipeNavRef.current = {
+          active: true,
+          startX: e.touches[0].clientX,
+          startY: e.touches[0].clientY,
+          dx: 0,
+        };
       }
     }
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 2 && pinchDistRef.current) {
+    if (isImage && e.touches.length === 2 && pinchDistRef.current) {
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       const dist = Math.hypot(dx, dy);
       const nextZoom = clampZoom(pinchBaseZoomRef.current * (dist / pinchDistRef.current));
       setZoom(nextZoom);
       if (nextZoom === 1) setPan({ x: 0, y: 0 });
-    } else if (e.touches.length === 1 && dragRef.current.active && zoom > 1) {
+    } else if (isImage && e.touches.length === 1 && dragRef.current.active && zoom > 1) {
       setPan({
         x: dragRef.current.origX + (e.touches[0].clientX - dragRef.current.startX),
         y: dragRef.current.origY + (e.touches[0].clientY - dragRef.current.startY),
       });
+    } else if (e.touches.length === 1 && swipeNavRef.current.active && zoom <= 1.05) {
+      const dx = e.touches[0].clientX - swipeNavRef.current.startX;
+      const dy = e.touches[0].clientY - swipeNavRef.current.startY;
+      if (Math.abs(dy) > 36 && Math.abs(dy) > Math.abs(dx)) {
+        swipeNavRef.current.active = false;
+      } else {
+        swipeNavRef.current.dx = dx;
+      }
     }
   };
 
   const handleTouchEnd = () => {
+    if (swipeNavRef.current.active && zoom <= 1.05) {
+      const dx = swipeNavRef.current.dx;
+      if (dx <= -60) {
+        goNextMedia();
+      } else if (dx >= 60) {
+        goPrevMedia();
+      }
+    }
     pinchDistRef.current = null;
     dragRef.current.active = false;
+    swipeNavRef.current.active = false;
   };
 
   const lines = textDraft.split('\n');
   const extLabel = getExtension(file.name).toUpperCase() || file.kind.toUpperCase();
+
+  // Immersive Fullscreen Gallery Viewer for Images & Videos
+  if ((isImage || isVideo) && mediaSrc) {
+    const hasPrev = currentMediaIndex > 0;
+    const hasNext = currentMediaIndex >= 0 && currentMediaIndex < mediaSiblings.length - 1;
+
+    return (
+      <div className="fixed inset-0 z-50 bg-black text-white flex flex-col select-none">
+        {/* Top Gallery Header */}
+        <div
+          className={`absolute top-0 inset-x-0 z-20 bg-gradient-to-b from-black/85 via-black/50 to-transparent px-3 sm:px-5 pt-3 pb-6 flex items-center justify-between gap-3 transition-opacity duration-200 ${
+            showOverlay ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white shrink-0"
+              aria-label="Back"
+            >
+              <ArrowLeft size={20} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm sm:text-base font-semibold text-white truncate">
+                {file.name}
+              </h2>
+              <p className="text-[11px] text-white/75 tabular-nums truncate">
+                {mediaSiblings.length > 1 && currentMediaIndex >= 0
+                  ? `${currentMediaIndex + 1} / ${mediaSiblings.length} · `
+                  : ''}
+                {formatBytes(file.size)} · {formatDateTime(file.modifiedAt)}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {isImage && (
+              <div className="hidden sm:flex items-center gap-1 bg-white/10 rounded-full px-2 py-1 mr-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = clampZoom(zoom - 0.5);
+                    setZoom(next);
+                    if (next === 1) setPan({ x: 0, y: 0 });
+                  }}
+                  disabled={zoom <= 1}
+                  className="p-1 rounded-full hover:bg-white/15 disabled:opacity-40"
+                  aria-label="Zoom out"
+                >
+                  <ZoomOut size={15} />
+                </button>
+                <span className="text-[11px] font-mono tabular-nums min-w-[42px] text-center">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setZoom(clampZoom(zoom + 0.5))}
+                  disabled={zoom >= 5}
+                  className="p-1 rounded-full hover:bg-white/15 disabled:opacity-40"
+                  aria-label="Zoom in"
+                >
+                  <ZoomIn size={15} />
+                </button>
+                {zoom > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setZoom(1);
+                      setPan({ x: 0, y: 0 });
+                    }}
+                    className="p-1 rounded-full hover:bg-white/15"
+                    aria-label="Reset zoom"
+                  >
+                    <RotateCcw size={14} />
+                  </button>
+                )}
+              </div>
+            )}
+            {onOpenExternal && (
+              <button
+                type="button"
+                onClick={() => onOpenExternal(file)}
+                className="px-3 py-1.5 rounded-full text-xs font-medium bg-white/12 hover:bg-white/20 text-white flex items-center gap-1.5"
+                title="Open with external app"
+              >
+                <ExternalLink size={14} />
+                <span className="hidden sm:inline">Open with</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Main Stage */}
+        <div
+          className="relative flex-1 flex items-center justify-center overflow-hidden touch-none"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onClick={() => {
+            if (isImage) setShowOverlay((v) => !v);
+          }}
+        >
+          {isImage ? (
+            <div
+              className="w-full h-full flex items-center justify-center cursor-grab active:cursor-grabbing"
+              onWheel={(e) => {
+                e.preventDefault();
+                const next = clampZoom(zoom + (e.deltaY < 0 ? 0.25 : -0.25));
+                setZoom(next);
+                if (next === 1) setPan({ x: 0, y: 0 });
+              }}
+              onMouseDown={(e) => {
+                if (zoom <= 1) return;
+                dragRef.current = {
+                  active: true,
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  origX: pan.x,
+                  origY: pan.y,
+                };
+              }}
+              onMouseMove={(e) => {
+                if (!dragRef.current.active || zoom <= 1) return;
+                setPan({
+                  x: dragRef.current.origX + (e.clientX - dragRef.current.startX),
+                  y: dragRef.current.origY + (e.clientY - dragRef.current.startY),
+                });
+              }}
+              onMouseUp={() => {
+                dragRef.current.active = false;
+              }}
+              onMouseLeave={() => {
+                dragRef.current.active = false;
+              }}
+            >
+              <img
+                src={mediaSrc}
+                alt={file.name}
+                draggable={false}
+                referrerPolicy="no-referrer"
+                style={{
+                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                  transition: dragRef.current.active ? 'none' : 'transform 120ms ease-out',
+                }}
+                className="max-w-full max-h-full object-contain pointer-events-none"
+              />
+            </div>
+          ) : (
+            <div
+              className="w-full h-full flex items-center justify-center p-2 sm:p-6"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <video
+                key={file.id}
+                src={mediaSrc}
+                controls
+                autoPlay
+                playsInline
+                className="max-w-full max-h-[82vh] rounded-xl outline-none shadow-2xl"
+              />
+            </div>
+          )}
+
+          {/* Previous / Next Navigation Arrows */}
+          {showOverlay && hasPrev && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                goPrevMedia();
+              }}
+              className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/55 hover:bg-black/80 border border-white/15 text-white flex items-center justify-center shadow-lg"
+              aria-label="Previous"
+            >
+              <ChevronLeft size={22} />
+            </button>
+          )}
+          {showOverlay && hasNext && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                goNextMedia();
+              }}
+              className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/55 hover:bg-black/80 border border-white/15 text-white flex items-center justify-center shadow-lg"
+              aria-label="Next"
+            >
+              <ChevronRight size={22} />
+            </button>
+          )}
+        </div>
+
+        {/* Bottom Filmstrip & Gallery Action Bar */}
+        <div
+          className={`absolute bottom-0 inset-x-0 z-20 bg-gradient-to-t from-black/90 via-black/70 to-transparent pt-6 pb-3 px-3 sm:px-5 space-y-2.5 transition-opacity duration-200 ${
+            showOverlay ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {mediaSiblings.length > 1 && onSelectFile && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 justify-start sm:justify-center">
+              {mediaSiblings.slice(0, 80).map((item) => {
+                const isActive = item.id === file.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => onSelectFile(item)}
+                    className={`w-11 h-11 rounded-lg overflow-hidden shrink-0 border-2 transition-all ${
+                      isActive
+                        ? 'border-blue-500 scale-105 shadow-md'
+                        : 'border-white/20 opacity-65 hover:opacity-100'
+                    }`}
+                    aria-label={item.name}
+                  >
+                    <FileIcon node={item} showThumbnails={true} size="fill" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="flex items-center justify-around max-w-md mx-auto text-xs font-medium">
+            {onShareFile && (
+              <button
+                type="button"
+                onClick={() => onShareFile(file)}
+                className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl text-white/90 hover:bg-white/10"
+              >
+                <Share2 size={18} />
+                <span>Share</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onDownloadFile(file)}
+              className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl text-white/90 hover:bg-white/10"
+            >
+              <Download size={18} />
+              <span>Export</span>
+            </button>
+            {onOpenExternal && (
+              <button
+                type="button"
+                onClick={() => onOpenExternal(file)}
+                className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl text-white/90 hover:bg-white/10"
+              >
+                <ExternalLink size={18} />
+                <span>Open</span>
+              </button>
+            )}
+            {onDeleteFile && (
+              <button
+                type="button"
+                onClick={() => onDeleteFile(file)}
+                className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl text-rose-400 hover:bg-rose-500/20"
+              >
+                <Trash2 size={18} />
+                <span>Delete</span>
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/75 backdrop-blur-xs">
@@ -472,107 +830,7 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
 
         {/* Viewer Body */}
         <div className="flex-1 overflow-auto bg-slate-50 dark:bg-slate-950 flex flex-col">
-          {isImage && mediaSrc ? (
-            <div className="relative flex-1 min-h-[320px] flex flex-col bg-slate-950 select-none overflow-hidden">
-              <div
-                className="flex-1 flex items-center justify-center overflow-hidden touch-none cursor-grab active:cursor-grabbing"
-                onWheel={(e) => {
-                  e.preventDefault();
-                  const next = clampZoom(zoom + (e.deltaY < 0 ? 0.25 : -0.25));
-                  setZoom(next);
-                  if (next === 1) setPan({ x: 0, y: 0 });
-                }}
-                onMouseDown={(e) => {
-                  if (zoom <= 1) return;
-                  dragRef.current = {
-                    active: true,
-                    startX: e.clientX,
-                    startY: e.clientY,
-                    origX: pan.x,
-                    origY: pan.y,
-                  };
-                }}
-                onMouseMove={(e) => {
-                  if (!dragRef.current.active || zoom <= 1) return;
-                  setPan({
-                    x: dragRef.current.origX + (e.clientX - dragRef.current.startX),
-                    y: dragRef.current.origY + (e.clientY - dragRef.current.startY),
-                  });
-                }}
-                onMouseUp={() => {
-                  dragRef.current.active = false;
-                }}
-                onMouseLeave={() => {
-                  dragRef.current.active = false;
-                }}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-              >
-                <img
-                  src={mediaSrc}
-                  alt={file.name}
-                  draggable={false}
-                  referrerPolicy="no-referrer"
-                  style={{
-                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                    transition: dragRef.current.active ? 'none' : 'transform 120ms ease-out',
-                  }}
-                  className="max-w-full max-h-[64vh] object-contain pointer-events-none"
-                />
-              </div>
-
-              {/* Zoom Toolbar */}
-              <div className="px-4 py-2.5 bg-slate-900/90 border-t border-slate-800 flex items-center justify-center gap-2 text-white">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = clampZoom(zoom - 0.5);
-                    setZoom(next);
-                    if (next === 1) setPan({ x: 0, y: 0 });
-                  }}
-                  className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-40"
-                  disabled={zoom <= 1}
-                  aria-label="Zoom out"
-                >
-                  <ZoomOut size={16} />
-                </button>
-                <span className="text-xs font-mono tabular-nums min-w-[54px] text-center">
-                  {Math.round(zoom * 100)}%
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setZoom(clampZoom(zoom + 0.5))}
-                  className="p-2 rounded-lg hover:bg-slate-800 disabled:opacity-40"
-                  disabled={zoom >= 5}
-                  aria-label="Zoom in"
-                >
-                  <ZoomIn size={16} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setZoom(1);
-                    setPan({ x: 0, y: 0 });
-                  }}
-                  className="p-2 rounded-lg hover:bg-slate-800 ml-1"
-                  aria-label="Reset zoom"
-                >
-                  <RotateCcw size={15} />
-                </button>
-              </div>
-            </div>
-          ) : isVideo && mediaSrc ? (
-            <div className="flex-1 min-h-[260px] bg-black flex items-center justify-center p-2">
-              <video
-                src={mediaSrc}
-                controls
-                autoPlay
-                playsInline
-                className="w-full max-h-[65vh] rounded-lg outline-none"
-              />
-            </div>
-          ) : isAudio && mediaSrc ? (
+          {isAudio && mediaSrc ? (
             <div className="flex-1 p-8 flex flex-col items-center justify-center gap-5">
               <div className="w-20 h-20 rounded-2xl bg-violet-100 dark:bg-violet-950/50 text-violet-600 dark:text-violet-400 flex items-center justify-center">
                 <Music size={38} />

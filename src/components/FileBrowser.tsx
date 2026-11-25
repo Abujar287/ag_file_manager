@@ -7,6 +7,8 @@ import {
   FileArchive,
   FolderOpen,
   Info,
+  LayoutGrid,
+  List as ListIcon,
   MoreHorizontal,
   Pencil,
   RotateCcw,
@@ -58,7 +60,7 @@ interface FileBrowserProps {
   clipboard: ClipboardState | null;
   onBackHome: () => void;
   onOpenFolder: (folderId: string) => void;
-  onOpenFile: (file: FileNode) => void;
+  onOpenFile: (file: FileNode, contextList?: FileNode[]) => void;
   onCopy: (ids: string[]) => void;
   onCut: (ids: string[]) => void;
   onPaste: (targetFolderId: string) => void;
@@ -92,6 +94,7 @@ interface RowProps {
   viewMode: ViewMode;
   showThumbnails: boolean;
   childrenMap: ChildrenMap;
+  isMediaGallery?: boolean;
   onPointerDown: (id: string, e: React.PointerEvent) => void;
   onPointerMove: (e: React.PointerEvent) => void;
   onCancelLongPress: () => void;
@@ -108,6 +111,7 @@ const FileBrowserRow = memo<RowProps>(
     viewMode,
     showThumbnails,
     childrenMap,
+    isMediaGallery = false,
     onPointerDown,
     onPointerMove,
     onCancelLongPress,
@@ -121,6 +125,66 @@ const FileBrowserRow = memo<RowProps>(
       node.kind === 'folder' ? getFolderVisualMetaFromMap(node, childrenMap) : undefined;
 
     if (viewMode === 'grid') {
+      const isMedia = node.kind === 'image' || node.kind === 'video';
+      if (isMediaGallery && isMedia) {
+        return (
+          <div
+            onPointerDown={(e) => onPointerDown(node.id, e)}
+            onPointerMove={onPointerMove}
+            onPointerUp={onCancelLongPress}
+            onPointerLeave={onCancelLongPress}
+            onPointerCancel={onCancelLongPress}
+            onContextMenu={(e) => onContextSelect(node.id, e)}
+            onClick={() => onRowClick(node)}
+            className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer select-none bg-slate-200 dark:bg-slate-800 border transition-all ${
+              selected
+                ? 'border-blue-600 ring-2 ring-blue-500/70 scale-[0.97]'
+                : 'border-slate-200/80 dark:border-slate-800 hover:brightness-95'
+            }`}
+          >
+            <FileIcon
+              node={node}
+              showThumbnails={showThumbnails}
+              size="fill"
+              folderMeta={folderMeta}
+            />
+
+            {/* Bottom gradient caption with file name & size */}
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-2 pt-5 pb-1.5 pointer-events-none">
+              <div className="text-[11px] font-medium text-white truncate leading-tight">
+                {node.name}
+              </div>
+              <div className="text-[10px] text-white/80 tabular-nums">
+                {formatBytes(node.size)}
+              </div>
+            </div>
+
+            {node.favourite && (
+              <span className="absolute top-1.5 left-1.5 p-1 rounded-full bg-black/45 text-amber-400 pointer-events-none">
+                <Star size={11} className="fill-amber-400" />
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={(e) => onToggleDot(node.id, e)}
+              aria-label={`Select ${node.name}`}
+              className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center"
+            >
+              {selected ? (
+                <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-sm">
+                  <Check size={12} strokeWidth={3} />
+                </span>
+              ) : isSelecting ? (
+                <span className="w-5 h-5 rounded-full border-2 border-white bg-black/35 shadow-sm" />
+              ) : (
+                <span className="w-3.5 h-3.5 rounded-full border border-white/80 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity" />
+              )}
+            </button>
+          </div>
+        );
+      }
+
       return (
         <div
           onPointerDown={(e) => onPointerDown(node.id, e)}
@@ -130,36 +194,50 @@ const FileBrowserRow = memo<RowProps>(
           onPointerCancel={onCancelLongPress}
           onContextMenu={(e) => onContextSelect(node.id, e)}
           onClick={() => onRowClick(node)}
-          className={`p-3.5 rounded-2xl border cursor-pointer select-none transition-colors flex flex-col gap-2.5 ${
+          className={`rounded-2xl border cursor-pointer select-none transition-colors overflow-hidden flex flex-col ${
             selected
-              ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-500'
+              ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-500 ring-1 ring-blue-500/40'
               : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
           }`}
         >
-          <div className="flex items-start justify-between">
-            <FileIcon
-              node={node}
-              showThumbnails={showThumbnails}
-              size="lg"
-              folderMeta={folderMeta}
-            />
-            {isSelecting && (
-              <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center border ${
-                  selected
-                    ? 'bg-blue-600 border-blue-600 text-white'
-                    : 'border-slate-300 dark:border-slate-700'
-                }`}
-              >
-                {selected && <Check size={14} />}
-              </div>
+          <div className="relative aspect-square w-full bg-slate-100/70 dark:bg-slate-800/50 flex items-center justify-center overflow-hidden">
+            {isMedia ? (
+              <FileIcon
+                node={node}
+                showThumbnails={showThumbnails}
+                size="fill"
+                folderMeta={folderMeta}
+              />
+            ) : (
+              <FileIcon
+                node={node}
+                showThumbnails={showThumbnails}
+                size="lg"
+                folderMeta={folderMeta}
+              />
             )}
+
+            <button
+              type="button"
+              onClick={(e) => onToggleDot(node.id, e)}
+              aria-label={`Select ${node.name}`}
+              className="absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center"
+            >
+              {selected ? (
+                <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-xs">
+                  <Check size={12} strokeWidth={3} />
+                </span>
+              ) : isSelecting ? (
+                <span className="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 bg-white/80 dark:bg-slate-900/80" />
+              ) : null}
+            </button>
           </div>
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
+
+          <div className="p-2.5 min-w-0">
+            <div className="text-xs sm:text-sm font-medium text-slate-900 dark:text-slate-100 truncate">
               {node.name}
             </div>
-            <div className="text-xs text-slate-500 dark:text-slate-400 tabular-nums mt-0.5 truncate">
+            <div className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums mt-0.5 truncate">
               {node.kind === 'folder' && folderStats
                 ? `${folderStats.itemCount} items · ${formatBytes(folderStats.totalSize)}`
                 : formatBytes(node.size)}
@@ -343,6 +421,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
   selectedIdsRef.current = selectedIds;
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [visibleLimit, setVisibleLimit] = useState(120);
+  const isMediaCategory =
+    mode === 'category' && (category === 'images' || category === 'videos');
+  const [galleryViewOverride, setGalleryViewOverride] = useState<'grid' | 'list' | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -353,7 +434,12 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
     setSelectedIds([]);
     setMoreMenuOpen(false);
     setVisibleLimit(120);
+    setGalleryViewOverride(null);
   }, [mode, folderId, category]);
+
+  const effectiveViewMode: ViewMode = isMediaCategory
+    ? galleryViewOverride ?? 'grid'
+    : viewMode;
 
   useEffect(() => {
     const handleOutside = (e: MouseEvent) => {
@@ -549,6 +635,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
     setSelectedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
   }, []);
 
+  const sortedItemsRef = useRef<FileNode[]>(sortedItems);
+  sortedItemsRef.current = sortedItems;
+
   const handleRowClick = useCallback(
     (node: FileNode) => {
       if (longPressTriggeredRef.current) {
@@ -562,7 +651,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
       if (node.kind === 'folder') {
         onOpenFolder(node.id);
       } else {
-        onOpenFile(node);
+        onOpenFile(node, sortedItemsRef.current);
       }
     },
     [toggleSelect, onOpenFolder, onOpenFile]
@@ -645,6 +734,19 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
         )}
 
         <div className="flex items-center gap-2 shrink-0">
+          {isMediaCategory && !isSelecting && (
+            <button
+              type="button"
+              onClick={() =>
+                setGalleryViewOverride(effectiveViewMode === 'grid' ? 'list' : 'grid')
+              }
+              className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
+              aria-label={effectiveViewMode === 'grid' ? 'Switch to list view' : 'Switch to gallery view'}
+              title={effectiveViewMode === 'grid' ? 'List View' : 'Gallery View'}
+            >
+              {effectiveViewMode === 'grid' ? <ListIcon size={16} /> : <LayoutGrid size={16} />}
+            </button>
+          )}
           {isRecycleBin && sortedItems.length > 0 && !isSelecting ? (
             <button
               type="button"
@@ -711,8 +813,14 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
               : 'Use the top-right 3-dot menu to create a new folder or file.'}
           </p>
         </div>
-      ) : viewMode === 'grid' ? (
-        <div className="px-4 sm:px-6 pt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+      ) : effectiveViewMode === 'grid' ? (
+        <div
+          className={
+            isMediaCategory
+              ? 'px-2.5 sm:px-6 pt-3 grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5 sm:gap-2.5'
+              : 'px-4 sm:px-6 pt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3'
+          }
+        >
           {renderedItems.map((node) => (
             <FileBrowserRow
               key={node.id}
@@ -722,6 +830,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
               viewMode="grid"
               showThumbnails={showThumbnails}
               childrenMap={childrenMap}
+              isMediaGallery={isMediaCategory}
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onCancelLongPress={cancelLongPress}
@@ -731,7 +840,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
             />
           ))}
         </div>
-      ) : viewMode === 'detail' ? (
+      ) : effectiveViewMode === 'detail' ? (
         <div>
           <div className="px-4 sm:px-6 py-2 bg-slate-100/70 dark:bg-slate-900/70 border-b border-slate-200/70 dark:border-slate-800 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             <div className="w-9 shrink-0" />

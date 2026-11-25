@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Home, Menu, X } from 'lucide-react';
+import { ChevronRight, Home, Menu, X } from 'lucide-react';
 import {
   ActiveScreen,
   AnalyzerToolType,
@@ -222,6 +222,7 @@ export default function App() {
   const [moveTargetIds, setMoveTargetIds] = useState<string[] | null>(null);
   const [propertiesNodes, setPropertiesNodes] = useState<FileNode[] | null>(null);
   const [viewingFile, setViewingFile] = useState<FileNode | null>(null);
+  const [viewingContextFiles, setViewingContextFiles] = useState<FileNode[]>([]);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
   const [viewSortModalOpen, setViewSortModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -240,8 +241,9 @@ export default function App() {
     reason: string;
   } | null>(null);
 
-  // Left-to-right swipe navigation state (DOM-driven to avoid 60fps full-tree re-renders)
+  // Swipe navigation state (DOM-driven to avoid 60fps full-tree re-renders)
   const swipeIndicatorRef = useRef<HTMLDivElement>(null);
+  const swipeRightIndicatorRef = useRef<HTMLDivElement>(null);
   const edgeSwipeRef = useRef<{ active: boolean; startX: number; startY: number; lastDx: number } | null>(null);
 
   // Exit dialog & storage permission states (Points 1, 2, 6)
@@ -323,6 +325,8 @@ export default function App() {
   nativeEmptyFoldersRef.current = nativeEmptyFolders;
   const activeTabIdRef = useRef(activeTab.id);
   activeTabIdRef.current = activeTab.id;
+  const activeScreenRef = useRef(activeScreen);
+  activeScreenRef.current = activeScreen;
   const storageStatsRef = useRef(storageStats);
   storageStatsRef.current = storageStats;
 
@@ -644,6 +648,13 @@ export default function App() {
       }
     };
 
+    const onWindowFocus = () => {
+      const screen = activeScreenRef.current;
+      if (isRunningInAndroidApp() && screen.type === 'category' && screen.category === 'apps') {
+        loadInstalledApps(true);
+      }
+    };
+
     window.addEventListener('android_permission_result', onPermissionEvent);
     window.addEventListener('android_dir_result', onDirResult);
     window.addEventListener('android_categories_result', onCategoriesResult);
@@ -651,6 +662,7 @@ export default function App() {
     window.addEventListener('android_apps_changed', onAppsChanged);
     window.addEventListener('android_empty_folders_result', onEmptyFoldersResult);
     window.addEventListener('android_trash_items_result', onTrashItemsResult);
+    window.addEventListener('focus', onWindowFocus);
     return () => {
       window.removeEventListener('android_permission_result', onPermissionEvent);
       window.removeEventListener('android_dir_result', onDirResult);
@@ -659,8 +671,9 @@ export default function App() {
       window.removeEventListener('android_apps_changed', onAppsChanged);
       window.removeEventListener('android_empty_folders_result', onEmptyFoldersResult);
       window.removeEventListener('android_trash_items_result', onTrashItemsResult);
+      window.removeEventListener('focus', onWindowFocus);
     };
-  }, []);
+  }, [loadInstalledApps]);
 
   const syncScreenSideEffects = useCallback((screen: ActiveScreen) => {
     const currentFiles = filesRef.current;
@@ -963,7 +976,10 @@ export default function App() {
     handleDownloadFileCopy(file);
   };
 
-  const handleOpenFile = useCallback((file: FileNode) => {
+  const handleOpenFile = useCallback((file: FileNode, contextList?: FileNode[]) => {
+    const applyContext = () => {
+      setViewingContextFiles(contextList && contextList.length > 0 ? contextList : []);
+    };
     const bridge = getNativeBridge();
     if (bridge && file.realPath) {
       if (file.kind === 'apk' && typeof bridge.installApk === 'function') {
@@ -1006,6 +1022,7 @@ export default function App() {
         const fileUri =
           file.mediaUrl ||
           `file://${encodeURI(file.realPath).replace(/#/g, '%23')}`;
+        applyContext();
         setViewingFile({ ...file, mediaUrl: fileUri });
         return;
       }
@@ -1020,6 +1037,7 @@ export default function App() {
             };
             if (!detail || detail.requestId !== reqId) return;
             window.removeEventListener('android_text_result', onTextResult);
+            applyContext();
             setViewingFile({ ...file, content: detail.content ?? '' });
           };
           window.addEventListener('android_text_result', onTextResult);
@@ -1033,6 +1051,7 @@ export default function App() {
         if (typeof bridge.readTextFile === 'function') {
           try {
             const text = bridge.readTextFile(file.realPath);
+            applyContext();
             setViewingFile({ ...file, content: text });
             return;
           } catch {
@@ -1041,8 +1060,9 @@ export default function App() {
         }
       }
     }
+    applyContext();
     setViewingFile(file);
-  }, []);
+  }, [showToast]);
 
   const handleCreateNewItem = (name: string, type: 'folder' | 'text' | 'file') => {
     const targetParentId =
@@ -1709,6 +1729,11 @@ export default function App() {
       )
     : [];
 
+  const nextWindowTab =
+    tabs.length > 1
+      ? tabs[(tabs.findIndex((t) => t.id === activeTab.id) + 1) % tabs.length]
+      : null;
+
   const updateSwipeIndicator = useCallback((dx: number) => {
     const el = swipeIndicatorRef.current;
     if (!el) return;
@@ -1722,8 +1747,38 @@ export default function App() {
     }
   }, []);
 
+  const updateRightSwipeIndicator = useCallback((dx: number) => {
+    const el = swipeRightIndicatorRef.current;
+    if (!el) return;
+    if (dx < -12) {
+      el.style.display = 'flex';
+      el.style.transform = `translate3d(${Math.max(-18, dx + 36)}px, -50%, 0)`;
+      el.style.opacity = String(Math.min(1, Math.abs(dx) / 64));
+    } else {
+      el.style.display = 'none';
+      el.style.opacity = '0';
+    }
+  }, []);
+
   const handleRootTouchStart = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length !== 1) return;
+    if (
+      e.touches.length !== 1 ||
+      viewingFile ||
+      drawerOpen ||
+      updateModalOpen ||
+      viewSortModalOpen ||
+      Boolean(moveTargetIds) ||
+      Boolean(renameTargetIds) ||
+      Boolean(deleteConfirm) ||
+      Boolean(propertiesNodes) ||
+      Boolean(newItemType) ||
+      exitConfirmOpen ||
+      storagePermissionOpen ||
+      Boolean(apkConflictPrompt)
+    ) {
+      edgeSwipeRef.current = null;
+      return;
+    }
     // Skip swipe when inside a horizontally scrollable strip (breadcrumbs, tabs, etc.)
     let el = e.target as HTMLElement | null;
     while (el && el !== e.currentTarget) {
@@ -1737,18 +1792,26 @@ export default function App() {
       el = el.parentElement;
     }
     const touch = e.touches[0];
-    const maxStartX = Math.max(220, window.innerWidth * 0.65);
-    if (touch.clientX <= maxStartX) {
-      edgeSwipeRef.current = {
-        active: true,
-        startX: touch.clientX,
-        startY: touch.clientY,
-        lastDx: 0,
-      };
-    } else {
-      edgeSwipeRef.current = null;
-    }
-  }, []);
+    edgeSwipeRef.current = {
+      active: true,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastDx: 0,
+    };
+  }, [
+    viewingFile,
+    drawerOpen,
+    updateModalOpen,
+    viewSortModalOpen,
+    moveTargetIds,
+    renameTargetIds,
+    deleteConfirm,
+    propertiesNodes,
+    newItemType,
+    exitConfirmOpen,
+    storagePermissionOpen,
+    apkConflictPrompt,
+  ]);
 
   const handleRootTouchMove = useCallback((e: React.TouchEvent) => {
     const state = edgeSwipeRef.current;
@@ -1758,14 +1821,22 @@ export default function App() {
     if (Math.abs(dy) > 28 && Math.abs(dy) > Math.abs(dx) * 0.9) {
       edgeSwipeRef.current = null;
       updateSwipeIndicator(0);
+      updateRightSwipeIndicator(0);
       return;
     }
-    if (dx > 8 && dx > Math.abs(dy) * 1.15) {
+    const maxLeftStartX = Math.max(220, window.innerWidth * 0.65);
+    if (dx > 8 && dx > Math.abs(dy) * 1.15 && state.startX <= maxLeftStartX) {
       const clamped = Math.min(110, dx);
       state.lastDx = clamped;
       updateSwipeIndicator(clamped);
+      updateRightSwipeIndicator(0);
+    } else if (dx < -8 && Math.abs(dx) > Math.abs(dy) * 1.15 && tabs.length > 1) {
+      const clamped = Math.max(-110, dx);
+      state.lastDx = clamped;
+      updateRightSwipeIndicator(clamped);
+      updateSwipeIndicator(0);
     }
-  }, [updateSwipeIndicator]);
+  }, [tabs.length, updateSwipeIndicator, updateRightSwipeIndicator]);
 
   const handleRootTouchEnd = useCallback(() => {
     const state = edgeSwipeRef.current;
@@ -1777,10 +1848,29 @@ export default function App() {
       } else if (state.startX <= 96) {
         setDrawerOpen(true);
       }
+    } else if (state?.active && state.lastDx <= -64 && tabs.length > 1) {
+      const idx = tabs.findIndex((t) => t.id === activeTab.id);
+      const targetTab = tabs[(idx + 1) % tabs.length];
+      if (targetTab) {
+        setSearchOpen(false);
+        setSearchQuery('');
+        syncScreenSideEffects(targetTab.screen);
+        setActiveTabId(targetTab.id);
+      }
     }
     edgeSwipeRef.current = null;
     updateSwipeIndicator(0);
-  }, [activeScreen.type, searchOpen, navigateInActiveTab, updateSwipeIndicator]);
+    updateRightSwipeIndicator(0);
+  }, [
+    activeScreen.type,
+    activeTab.id,
+    tabs,
+    searchOpen,
+    navigateInActiveTab,
+    syncScreenSideEffects,
+    updateSwipeIndicator,
+    updateRightSwipeIndicator,
+  ]);
 
   const handleBackActionRef = useRef(handleBackAction);
   handleBackActionRef.current = handleBackAction;
@@ -1850,6 +1940,18 @@ export default function App() {
         <span className="text-xs font-semibold">
           {activeScreen.type !== 'home' || searchOpen ? 'Home' : 'Menu'}
         </span>
+      </div>
+
+      {/* Right-to-Left Swipe Next-Window Indicator */}
+      <div
+        ref={swipeRightIndicatorRef}
+        style={{ display: 'none', opacity: 0 }}
+        className="fixed right-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none items-center gap-1.5 pl-3 pr-2 py-2.5 rounded-l-2xl bg-blue-600 text-white shadow-xl max-w-[180px]"
+      >
+        <span className="text-xs font-semibold truncate">
+          {nextWindowTab ? nextWindowTab.title : 'Next'}
+        </span>
+        <ChevronRight size={16} className="shrink-0" />
       </div>
 
       {/* Hidden file picker for importing individual real files from device */}
@@ -2151,10 +2253,21 @@ export default function App() {
 
       <FileViewerDialog
         file={viewingFile}
-        onClose={() => setViewingFile(null)}
+        galleryFiles={viewingContextFiles}
+        onSelectFile={(nextFile) => handleOpenFile(nextFile, viewingContextFiles)}
+        onClose={() => {
+          setViewingFile(null);
+          setViewingContextFiles([]);
+        }}
         onSaveText={handleSaveTextFile}
         onDownloadFile={handleDownloadFileCopy}
         onOpenExternal={handleOpenExternal}
+        onShareFile={(target) => handleShare([target.id])}
+        onDeleteFile={(target) => {
+          setViewingFile(null);
+          setViewingContextFiles([]);
+          requestDeleteConfirm([target.id], false);
+        }}
       />
 
       <UpdateModal
@@ -2227,7 +2340,7 @@ export default function App() {
       {toastMessage && (
         <div
           role="status"
-          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-medium shadow-lg whitespace-nowrap"
+          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 max-w-[90vw] px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-xs font-medium shadow-lg text-center break-words"
         >
           {toastMessage}
         </div>

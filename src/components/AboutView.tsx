@@ -39,19 +39,21 @@ export const AboutView: React.FC<AboutViewProps> = ({
         </div>
 
         <div className="divide-y divide-slate-100 dark:divide-slate-800 text-sm">
-          <div className="py-3 flex items-center justify-between gap-4">
+          <div className="py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
             <span className="text-slate-500 dark:text-slate-400">Apps Owner Name</span>
-            <span className="font-medium text-slate-900 dark:text-slate-100">Abujar Al-Gifari</span>
+            <span className="font-medium text-slate-900 dark:text-slate-100 break-words">
+              Abujar Al-Gifari
+            </span>
           </div>
-          <div className="py-3 flex items-center justify-between gap-4">
+          <div className="py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
             <span className="text-slate-500 dark:text-slate-400">Email</span>
-            <span className="font-mono text-xs sm:text-sm text-slate-900 dark:text-slate-100">
+            <span className="font-mono text-xs sm:text-sm text-slate-900 dark:text-slate-100 break-all">
               abujar287.algifari@gmail.com
             </span>
           </div>
-          <div className="py-3 flex items-center justify-between gap-4">
+          <div className="py-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
             <span className="text-slate-500 dark:text-slate-400">Version</span>
-            <span className="font-mono text-slate-900 dark:text-slate-100 tabular-nums">
+            <span className="font-mono text-slate-900 dark:text-slate-100 tabular-nums break-words">
               {settings.currentVersionName} (Build {settings.currentVersionCode})
             </span>
           </div>

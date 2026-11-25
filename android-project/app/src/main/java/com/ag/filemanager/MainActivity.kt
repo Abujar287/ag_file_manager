@@ -16,6 +16,7 @@ import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.pdf.PdfRenderer
 import android.media.ExifInterface
+import android.media.MediaMetadataRetriever
 import android.media.MediaScannerConnection
 import android.media.ThumbnailUtils
 import android.net.Uri
@@ -56,6 +57,7 @@ class MainActivity : Activity() {
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private var lastPermissionState: Boolean = false
     private val ioExecutor = Executors.newFixedThreadPool(3)
+    private val thumbExecutor = Executors.newFixedThreadPool(2)
     private val pendingUninstallQueue = ArrayDeque<String>()
     private var isUninstallInProgress = false
 
@@ -105,6 +107,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         ioExecutor.shutdownNow()
+        thumbExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -381,17 +384,36 @@ class MainActivity : Activity() {
                     return if (isVideo) null else Uri.fromFile(file).toString()
                 }
 
-                val maxDim = 160
+                val maxDim = 256
                 val rawBmp: Bitmap? = if (isVideo) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        ThumbnailUtils.createVideoThumbnail(file, Size(maxDim, maxDim), null)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        ThumbnailUtils.createVideoThumbnail(
-                            file.absolutePath,
-                            MediaStore.Video.Thumbnails.MINI_KIND
-                        )
+                    var videoBmp: Bitmap? = try {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            ThumbnailUtils.createVideoThumbnail(file, Size(maxDim, maxDim), null)
+                        } else {
+                            @Suppress("DEPRECATION")
+                            ThumbnailUtils.createVideoThumbnail(
+                                file.absolutePath,
+                                MediaStore.Video.Thumbnails.MINI_KIND
+                            )
+                        }
+                    } catch (_: Exception) {
+                        null
                     }
+                    if (videoBmp == null) {
+                        val retriever = MediaMetadataRetriever()
+                        try {
+                            retriever.setDataSource(file.absolutePath)
+                            videoBmp = retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                                ?: retriever.getFrameAtTime(0L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        } catch (_: Exception) {
+                        } finally {
+                            try {
+                                retriever.release()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                    videoBmp
                 } else {
                     val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeFile(file.absolutePath, opts)
@@ -577,7 +599,7 @@ class MainActivity : Activity() {
             val sdRoot = getSdRootCanonical()
             val resolvedParentId = mapParentId(targetDir, internalRoot, sdRoot)
             val jsonArr = JSONArray()
-            var newThumbsBudget = 20
+            var newThumbsBudget = 40
 
             for (file in list) {
                 val isDir = file.isDirectory
@@ -643,7 +665,7 @@ class MainActivity : Activity() {
 
             var scannedCount = 0
             val maxEntries = 3500
-            var newThumbsBudget = 20
+            var newThumbsBudget = 45
 
             while (queue.isNotEmpty() && scannedCount < maxEntries) {
                 val dir = queue.removeFirst()
@@ -714,6 +736,29 @@ class MainActivity : Activity() {
                 dispatchWebEvent("android_categories_result", JSONObject().apply {
                     put("requestId", requestId)
                     put("items", items)
+                })
+            }
+        }
+
+        @JavascriptInterface
+        fun getMediaThumbnailAsync(requestId: String, path: String?) {
+            if (path.isNullOrBlank()) return
+            thumbExecutor.execute {
+                val thumbUrl = try {
+                    val file = File(path)
+                    if (file.exists() && file.isFile) {
+                        val kind = inferKind(file.name)
+                        if (kind == "video" || kind == "image") {
+                            getOrGenerateThumbUri(file, kind == "video", allowCreate = true)
+                        } else null
+                    } else null
+                } catch (_: Exception) {
+                    null
+                }
+                dispatchWebEvent("android_thumb_result", JSONObject().apply {
+                    put("requestId", requestId)
+                    put("path", path)
+                    put("thumbnailUrl", thumbUrl ?: "")
                 })
             }
         }
@@ -935,32 +980,36 @@ class MainActivity : Activity() {
 
         @JavascriptInterface
         fun uninstallApp(packageName: String): Boolean {
-            return try {
+            if (packageName.isBlank()) return false
+            runOnUiThread {
                 pendingUninstallQueue.clear()
                 isUninstallInProgress = false
                 pendingUninstallQueue.addLast(packageName)
                 launchNextUninstall()
-                true
-            } catch (_: Exception) {
-                false
             }
+            return true
         }
 
         @JavascriptInterface
         fun uninstallApps(packagesJson: String): Boolean {
             return try {
                 val arr = JSONArray(packagesJson)
-                if (arr.length() == 0) return false
-                pendingUninstallQueue.clear()
-                isUninstallInProgress = false
+                val list = ArrayList<String>()
                 for (i in 0 until arr.length()) {
                     val pkg = arr.optString(i, "")
                     if (pkg.isNotBlank()) {
-                        pendingUninstallQueue.addLast(pkg)
+                        list.add(pkg)
                     }
                 }
-                if (pendingUninstallQueue.isEmpty()) return false
-                launchNextUninstall()
+                if (list.isEmpty()) return false
+                runOnUiThread {
+                    pendingUninstallQueue.clear()
+                    isUninstallInProgress = false
+                    for (pkg in list) {
+                        pendingUninstallQueue.addLast(pkg)
+                    }
+                    launchNextUninstall()
+                }
                 true
             } catch (_: Exception) {
                 false
