@@ -1,6 +1,6 @@
 import React from 'react';
-import { Monitor, Moon, Sun } from 'lucide-react';
-import { AppSettings, ThemeMode } from '../types/fileManager';
+import { Moon } from 'lucide-react';
+import { AppSettings } from '../types/fileManager';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -12,39 +12,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   onUpdateSettings,
 }) => {
-  const themes: { id: ThemeMode; label: string; icon: React.ReactNode }[] = [
-    { id: 'light', label: 'Light', icon: <Sun size={16} /> },
-    { id: 'dark', label: 'Dark', icon: <Moon size={16} /> },
-    { id: 'system', label: 'System', icon: <Monitor size={16} /> },
-  ];
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 py-3 sm:py-4 space-y-4">
 
-      {/* Theme Selector */}
-      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3">
+      {/* Theme Info (Fixed Charcoal Theme) */}
+      <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Theme</h3>
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Appearance</h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Choose appearance mode for AG File Manager
+            Charcoal Slate theme optimized for AMOLED and low-light viewing
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
-          {themes.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => onUpdateSettings({ theme: t.id })}
-              className={`min-h-[42px] px-3 py-2 rounded-lg text-xs sm:text-sm font-medium flex items-center justify-center gap-2 transition-colors ${
-                settings.theme === t.id
-                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-              }`}
-            >
-              {t.icon}
-              <span>{t.label}</span>
-            </button>
-          ))}
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700/60 text-xs font-semibold text-slate-700 dark:text-slate-200">
+          <Moon size={14} className="text-blue-500 dark:text-blue-400" />
+          <span>Charcoal Dark</span>
         </div>
       </section>
 

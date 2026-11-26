@@ -115,7 +115,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
       </svg>
 
       {/* Foreground Content */}
-      <div className="relative z-10 px-2.5 py-2 sm:px-3.5 sm:py-2.5 flex items-center gap-2 sm:gap-3 min-h-[64px] sm:min-h-[72px]">
+      <div className="relative z-10 px-3 py-2.5 sm:px-4 sm:py-3 flex items-center gap-2.5 sm:gap-3.5 min-h-[76px] sm:min-h-[86px]">
         {(() => {
           const freeBytes = Math.max(0, totalBytes - usedBytes);
           const freePercent = isMounted ? Math.max(0, 100 - Math.min(100, Math.max(0, percent))) : 0;
@@ -123,10 +123,10 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
 
           return (
             <>
-              {/* Left: Compact Storage Ring Gauge */}
-              <div className="relative w-8 h-8 sm:w-10 sm:h-10 shrink-0 flex items-center justify-center">
+              {/* Left: Storage Ring Gauge */}
+              <div className="relative w-9 h-9 sm:w-11 sm:h-11 shrink-0 flex items-center justify-center">
                 <svg
-                  className="w-8 h-8 sm:w-10 sm:h-10 -rotate-90"
+                  className="w-9 h-9 sm:w-11 sm:h-11 -rotate-90"
                   viewBox="0 0 36 36"
                   aria-hidden="true"
                 >
@@ -149,35 +149,35 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
                     />
                   )}
                 </svg>
-                <span className="absolute text-[9px] sm:text-[10px] font-bold text-white tabular-nums tracking-tight">
+                <span className="absolute text-[9px] sm:text-[11px] font-bold text-white tabular-nums tracking-tight">
                   {isMounted ? `${freePercent}%` : '0%'}
                 </span>
               </div>
 
               {/* Right Content */}
-              <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5 sm:gap-1">
+              <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 sm:gap-1.5">
                 {/* Top Row: Title + Arrow */}
                 <div className="flex items-center justify-between gap-1">
-                  <h2 className="text-[11px] sm:text-xs font-bold text-white tracking-tight leading-none truncate">
+                  <h2 className="text-xs sm:text-sm font-bold text-white tracking-tight leading-none truncate">
                     {title}
                   </h2>
                   {isMounted && (
                     <ArrowRight
-                      size={12}
+                      size={13}
                       className="text-[#8894A6] group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0"
                     />
                   )}
                 </div>
 
-                {/* Bottom Row: Free Space / Total Storage + % free */}
-                <div className="text-[10px] sm:text-[11px] tabular-nums leading-none font-medium">
+                {/* Bottom Row: Single-line Capacity (e.g. 46.56 GB Free / 108 GB) */}
+                <div className="text-[10px] sm:text-xs tabular-nums leading-none font-medium">
                   {isMounted ? (
-                    <div className="flex flex-wrap items-baseline gap-x-1">
-                      <span className="text-[#FF822E] font-bold whitespace-nowrap">
-                        {formatBytes(freeBytes, 1)} free
+                    <div className="flex flex-wrap items-baseline gap-x-1 whitespace-nowrap">
+                      <span className="text-white font-bold">
+                        {formatBytes(freeBytes, 2)} Free
                       </span>
-                      <span className="text-[#8E99A9] whitespace-nowrap">
-                        / {formatBytes(totalBytes, 0)} ({freePercent}%)
+                      <span className="text-[#8E99A9]">
+                        / {formatBytes(totalBytes, 0)}
                       </span>
                     </div>
                   ) : (
@@ -434,8 +434,11 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
         </section>
       )}
 
-      {/* 1. Storage Overview — Side-by-side MicroSD Card Design matching user reference */}
-      <section aria-label="Storage Overview">
+      {/* 1. Storage Overview — Distinct Subtle Container Background */}
+      <section
+        aria-label="Storage Overview"
+        className="p-3 sm:p-4 rounded-3xl bg-[#1b2230]/90 border border-slate-800 shadow-sm"
+      >
         <div className="grid grid-cols-2 gap-2 sm:gap-4">
           {/* Internal Storage Card */}
           <MicroSdCard
@@ -462,33 +465,39 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
         </div>
       </section>
 
-      {/* 2. Categories Section (3x5 Grid including Quick Analyzer rows) */}
-      <section aria-label="Categories">
-        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
-          Categories
-        </h3>
-        <div className="grid grid-cols-3 gap-2 sm:gap-3 py-0.5">
+      {/* 2. Categories Section (4 Columns Grid with extra breathing room/whitespace) */}
+      <section aria-label="Categories" className="pt-8 sm:pt-10">
+        <div className="flex items-center justify-between mb-3.5 px-0.5">
+          <h3 className="text-sm font-bold text-slate-200 tracking-tight">
+            Categories
+          </h3>
+          <span className="text-xs text-slate-400 font-medium">
+            {categories.length + quickTools.length} tools
+          </span>
+        </div>
+
+        <div className="grid grid-cols-4 gap-2.5 sm:gap-3.5 py-0.5">
           {categories.map((cat) => (
             <button
               key={cat.id}
               type="button"
               onClick={() => onOpenCategory(cat.id)}
-              className="group min-h-[78px] px-1 py-1 rounded-xl flex flex-col items-center justify-start text-center gap-1.5 transition-opacity active:opacity-75 focus-visible:outline-2 focus-visible:outline-blue-600"
+              className="group min-h-[90px] px-1 py-1 rounded-xl flex flex-col items-center justify-start text-center gap-1.5 transition-opacity active:opacity-75 focus-visible:outline-2 focus-visible:outline-blue-600"
             >
               <div
-                className={`relative w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center shadow-xs transition-transform group-hover:scale-105 ${cat.squircleBg}`}
+                className={`relative w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center shadow-xs transition-transform group-hover:scale-105 text-white ${cat.squircleBg}`}
               >
-                <span className="text-white/30 scale-95" aria-hidden="true">
-                  {cat.icon}
+                {cat.icon}
+              </div>
+
+              <div className="flex flex-col items-center min-w-0 w-full">
+                <span className="text-[11px] sm:text-xs font-semibold text-slate-200 leading-tight w-full truncate">
+                  {cat.label}
                 </span>
-                <span className="absolute inset-0 flex items-center justify-center text-sm sm:text-base font-bold text-white tabular-nums drop-shadow-xs">
+                <span className="text-[10px] font-medium text-slate-400 tabular-nums leading-tight mt-0.5">
                   {counts[cat.id]}
                 </span>
               </div>
-
-              <span className="text-[11px] sm:text-xs font-medium text-slate-800 dark:text-slate-200 leading-tight w-full truncate">
-                {cat.label}
-              </span>
             </button>
           ))}
 
@@ -497,19 +506,22 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
               key={tool.id}
               type="button"
               onClick={() => onOpenTool(tool.id)}
-              className="group min-h-[78px] px-1 py-1 rounded-xl flex flex-col items-center justify-start text-center gap-1.5 transition-opacity active:opacity-75 focus-visible:outline-2 focus-visible:outline-blue-600"
+              className="group min-h-[90px] px-1 py-1 rounded-xl flex flex-col items-center justify-start text-center gap-1.5 transition-opacity active:opacity-75 focus-visible:outline-2 focus-visible:outline-blue-600"
             >
               <div
-                className={`relative w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center shadow-xs transition-transform group-hover:scale-105 ${tool.squircleBg}`}
+                className={`relative w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center shadow-xs transition-transform group-hover:scale-105 text-white ${tool.squircleBg}`}
               >
-                <span className="text-white drop-shadow-xs" aria-hidden="true">
-                  {tool.icon}
-                </span>
+                {tool.icon}
               </div>
 
-              <span className="text-[11px] sm:text-xs font-medium text-slate-800 dark:text-slate-200 leading-tight w-full truncate">
-                {tool.label}
-              </span>
+              <div className="flex flex-col items-center min-w-0 w-full">
+                <span className="text-[11px] sm:text-xs font-semibold text-slate-200 leading-tight w-full truncate">
+                  {tool.label}
+                </span>
+                <span className="text-[10px] font-medium text-slate-500 tabular-nums leading-tight mt-0.5">
+                  Tool
+                </span>
+              </div>
             </button>
           ))}
         </div>

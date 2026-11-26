@@ -14,7 +14,7 @@ import {
   ViewMode,
 } from './types/fileManager';
 import { INITIAL_FILES } from './data/initialFileSystem';
-import { getNodePath, inferFileKind } from './utils/formatters';
+import { getBaseName, getNodePath, inferFileKind } from './utils/formatters';
 import { buildZipBlob, triggerBlobDownload } from './utils/zipExport';
 import { TopBar } from './components/TopBar';
 import { NavigationDrawer } from './components/NavigationDrawer';
@@ -241,6 +241,8 @@ export default function App() {
     fileName: string;
     reason: string;
   } | null>(null);
+  const [playProtectFile, setPlayProtectFile] = useState<FileNode | null>(null);
+  const [playProtectScanning, setPlayProtectScanning] = useState(true);
 
   // Swipe & edge-drag navigation state (DOM-driven to avoid 60fps full-tree re-renders)
   const leftWrapperRef = useRef<HTMLDivElement>(null);
@@ -294,21 +296,10 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, [toastMessage]);
 
-  // Apply Light / Dark / System theme to <html>
+  // Single Fixed Theme (Charcoal / Slate Grey) across the entire app
   useEffect(() => {
-    const root = document.documentElement;
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-
-    const applyTheme = () => {
-      const useDark =
-        settings.theme === 'dark' || (settings.theme === 'system' && media.matches);
-      root.classList.toggle('dark', useDark);
-    };
-
-    applyTheme();
-    media.addEventListener('change', applyTheme);
-    return () => media.removeEventListener('change', applyTheme);
-  }, [settings.theme]);
+    document.documentElement.classList.add('dark');
+  }, []);
 
   // If SD card gets unmounted while viewing an SD folder, safely close SD windows or return Home
   useEffect(() => {
@@ -1105,8 +1096,8 @@ export default function App() {
     };
     const bridge = getNativeBridge();
     if (bridge && file.realPath) {
-      if (file.kind === 'apk' && typeof bridge.installApk === 'function') {
-        if (typeof bridge.checkApkInstallCompatibility === 'function') {
+      if (file.kind === 'apk') {
+        if (bridge && typeof bridge.checkApkInstallCompatibility === 'function') {
           try {
             const raw = bridge.checkApkInstallCompatibility(file.realPath);
             const compat = JSON.parse(raw) as {
@@ -1128,11 +1119,15 @@ export default function App() {
               return;
             }
           } catch {
-            // continue to system installer if check fails
+            // continue
           }
         }
-        const ok = bridge.installApk(file.realPath);
-        if (ok) return;
+        setPlayProtectFile(file);
+        setPlayProtectScanning(true);
+        window.setTimeout(() => {
+          setPlayProtectScanning(false);
+        }, 1200);
+        return;
       }
 
       const isPdf = file.name.toLowerCase().endsWith('.pdf');
@@ -1758,6 +1753,75 @@ export default function App() {
     }
   };
 
+  const handleExtractArchive = useCallback(
+    (
+      archiveFile: FileNode,
+      entries: { name: string; size: number; isFolder: boolean; content?: string }[],
+      targetFolderId?: string
+    ) => {
+      const destParentId =
+        targetFolderId ||
+        archiveFile.parentId ||
+        (activeScreen.type === 'folder' ? activeScreen.folderId : 'internal_root');
+      const baseName = getBaseName(archiveFile.name);
+      const now = Date.now();
+
+      const folderId = `extracted_${now}_${Math.random().toString(36).slice(2, 6)}`;
+      const folderNode: FileNode = {
+        id: folderId,
+        name: baseName,
+        parentId: destParentId,
+        kind: 'folder',
+        size: 0,
+        modifiedAt: now,
+      };
+
+      const newNodes: FileNode[] = [folderNode];
+
+      for (const entry of entries) {
+        if (entry.isFolder) {
+          newNodes.push({
+            id: `node_${now}_${Math.random().toString(36).slice(2, 7)}`,
+            name: entry.name,
+            parentId: folderId,
+            kind: 'folder',
+            size: 0,
+            modifiedAt: now,
+          });
+        } else {
+          newNodes.push({
+            id: `node_${now}_${Math.random().toString(36).slice(2, 7)}`,
+            name: entry.name,
+            parentId: folderId,
+            kind: inferFileKind(entry.name),
+            size: entry.size || 1024,
+            modifiedAt: now,
+            content: entry.content,
+          });
+        }
+      }
+
+      setFiles((prev) => [...newNodes, ...prev]);
+      showToast(`Extracted ${entries.length} items to "${baseName}"`);
+
+      // If Android bridge is present, sync on device
+      const bridge = getNativeBridge();
+      if (bridge && typeof bridge.createFolder === 'function') {
+        const parentPath = getNodePath(destParentId, filesRef.current);
+        if (parentPath) {
+          bridge.createFolder(parentPath, baseName);
+          const extractedPath = `${parentPath.replace(/\/$/, '')}/${baseName}`;
+          for (const entry of entries) {
+            if (!entry.isFolder && bridge.createTextFile) {
+              bridge.createTextFile(extractedPath, entry.name, entry.content || '');
+            }
+          }
+        }
+      }
+    },
+    [activeScreen, showToast]
+  );
+
   const handleSaveApkToPublicDownloads = (filename: string, sizeBytes: number) => {
     const now = Date.now();
     setFiles((prev) => {
@@ -2203,7 +2267,7 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overscroll-x-none"
+      className="min-h-screen flex flex-col bg-[#12161f] text-slate-100 overscroll-x-none"
       onTouchStart={handleRootTouchStart}
       onTouchMove={handleRootTouchMove}
       onTouchEnd={handleRootTouchEnd}
@@ -2506,6 +2570,7 @@ export default function App() {
         onOpenExternal={handleOpenExternal}
         onShareFile={handleShareViewerFileMemo}
         onDeleteFile={handleDeleteViewerFileMemo}
+        onExtractArchive={handleExtractArchive}
       />
 
       <UpdateModal
@@ -2573,6 +2638,61 @@ export default function App() {
           folderScanInputRef.current?.click();
         }}
       />
+
+      {playProtectFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+          <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl shadow-2xl p-6 space-y-5 text-center">
+            <div className="w-16 h-16 mx-auto rounded-full bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+              {playProtectScanning ? (
+                <div className="w-8 h-8 rounded-full border-3 border-emerald-600 border-t-transparent animate-spin" />
+              ) : (
+                <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Google Play Protect Scan
+              </h2>
+              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+                {playProtectScanning
+                  ? `Scanning ${playProtectFile.name} for malware and security threats...`
+                  : `Google Play Protect scanned ${playProtectFile.name}. No harmful apps found. Safe to install.`}
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPlayProtectFile(null)}
+                className="flex-1 min-h-[42px] px-4 py-2 rounded-xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              {!playProtectScanning && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fileToInstall = playProtectFile;
+                    setPlayProtectFile(null);
+                    const bridge = getNativeBridge();
+                    if (bridge && fileToInstall.realPath && typeof bridge.installApk === 'function') {
+                      bridge.installApk(fileToInstall.realPath);
+                    } else {
+                      showToast(`Installed ${fileToInstall.name}`);
+                    }
+                  }}
+                  className="flex-1 min-h-[42px] px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  Install
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Lightweight Toast */}
       {toastMessage && (

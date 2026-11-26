@@ -28,6 +28,13 @@ import {
   X,
   ZoomIn,
   ZoomOut,
+  Archive,
+  Check,
+  Copy,
+  FileSpreadsheet,
+  Layers,
+  Search,
+  Table,
 } from 'lucide-react';
 import { FileNode } from '../types/fileManager';
 import {
@@ -39,6 +46,14 @@ import {
 } from '../utils/formatters';
 import { getNativeBridge, isRunningInAndroidApp } from '../services/deviceStorageService';
 import { FileIcon } from './FileIcon';
+import {
+  ArchiveEntry,
+  parseArchiveData,
+  parseDocxData,
+  ParsedDocx,
+  parseSpreadsheetData,
+  ParsedSpreadsheet,
+} from '../utils/documentParsers';
 
 interface NewItemDialogProps {
   type: 'folder' | 'text' | 'file' | null;
@@ -447,6 +462,11 @@ interface FileViewerDialogProps {
   onOpenExternal?: (file: FileNode) => void;
   onShareFile?: (file: FileNode) => void;
   onDeleteFile?: (file: FileNode) => void;
+  onExtractArchive?: (
+    archiveFile: FileNode,
+    entries: { name: string; size: number; isFolder: boolean; content?: string }[],
+    targetFolderId?: string
+  ) => void;
 }
 
 export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
@@ -459,6 +479,7 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
   onOpenExternal,
   onShareFile,
   onDeleteFile,
+  onExtractArchive,
 }) => {
   const [textDraft, setTextDraft] = useState('');
   const [textEditMode, setTextEditMode] = useState(false);
@@ -576,7 +597,30 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfZoom, setPdfZoom] = useState(1);
 
-  const isPdf = Boolean(file && file.name.toLowerCase().endsWith('.pdf'));
+  // Spreadsheet state
+  const [spreadsheetData, setSpreadsheetData] = useState<ParsedSpreadsheet | null>(null);
+  const [spreadsheetSearch, setSpreadsheetSearch] = useState('');
+
+  // Word Document state
+  const [docxData, setDocxData] = useState<ParsedDocx | null>(null);
+  const [docFontSize, setDocFontSize] = useState<'sm' | 'base' | 'lg'>('base');
+
+  // Archive (ZIP / RAR) state
+  const [archiveEntries, setArchiveEntries] = useState<ArchiveEntry[]>([]);
+  const [archiveSearch, setArchiveSearch] = useState('');
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [extractProgress, setExtractProgress] = useState(0);
+  const [extractedSuccess, setExtractedSuccess] = useState(false);
+
+  const fileExt = file ? getExtension(file.name).toLowerCase() : '';
+  const isPdf = Boolean(file && (fileExt === 'pdf' || file.name.toLowerCase().endsWith('.pdf')));
+  const isSpreadsheet = Boolean(file && ['xlsx', 'xls', 'csv', 'tsv'].includes(fileExt));
+  const isWordDoc = Boolean(file && ['docx', 'doc', 'dotx', 'dot'].includes(fileExt));
+  const isArchive = Boolean(
+    file &&
+      (['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso'].includes(fileExt) ||
+        file.kind === 'archive')
+  );
 
   const mediaSiblings = useMemo(() => {
     if (!file) return [];
@@ -646,7 +690,58 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
     setPdfPageIndex(0);
     setPdfPageDataUrl(null);
     setPdfZoom(1);
-  }, [file]);
+
+    // Reset document states
+    setSpreadsheetData(null);
+    setSpreadsheetSearch('');
+    setDocxData(null);
+    setArchiveEntries([]);
+    setArchiveSearch('');
+    setIsExtracting(false);
+    setExtractProgress(0);
+    setExtractedSuccess(false);
+
+    if (file) {
+      const src =
+        file.mediaUrl ||
+        (file.realPath ? `file://${encodeURI(file.realPath).replace(/#/g, '%23')}` : undefined);
+
+      if (['xlsx', 'xls', 'csv', 'tsv'].includes(fileExt)) {
+        setSpreadsheetData(parseSpreadsheetData(file.content, file.name));
+        if (src && !file.content) {
+          fetch(src)
+            .then((r) => (r.ok ? r.arrayBuffer() : null))
+            .then((buf) => {
+              if (buf) setSpreadsheetData(parseSpreadsheetData(buf, file.name));
+            })
+            .catch(() => {});
+        }
+      } else if (['docx', 'doc', 'dotx', 'dot'].includes(fileExt)) {
+        parseDocxData(file.content, file.name).then(setDocxData);
+        if (src && !file.content) {
+          fetch(src)
+            .then((r) => (r.ok ? r.arrayBuffer() : null))
+            .then((buf) => {
+              if (buf) parseDocxData(buf, file.name).then(setDocxData);
+            })
+            .catch(() => {});
+        }
+      } else if (
+        ['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso'].includes(fileExt) ||
+        file.kind === 'archive'
+      ) {
+        parseArchiveData(file.content, file.name).then(setArchiveEntries);
+        if (src && !file.content) {
+          fetch(src)
+            .then((r) => (r.ok ? r.arrayBuffer() : null))
+            .then((buf) => {
+              if (buf) parseArchiveData(buf, file.name).then(setArchiveEntries);
+            })
+            .catch(() => {});
+        }
+      }
+    }
+  }, [file, fileExt]);
 
   useEffect(() => {
     const onFsChange = () => {
@@ -1367,6 +1462,743 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
     );
   }
 
+  // Full-Screen PDF Viewer
+  if (isPdf) {
+    return (
+      <div className="fixed inset-0 z-50 bg-[#0e1219] text-white flex flex-col select-none overflow-hidden">
+        {/* Fullscreen PDF Header */}
+        <div className="shrink-0 bg-[#141a24] border-b border-slate-800 px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2.5 z-20">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-white shrink-0"
+              aria-label="Back"
+            >
+              <ArrowLeft size={19} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm sm:text-base font-semibold text-white truncate">
+                {file.name}
+              </h2>
+              <p className="text-[11px] text-slate-400 tabular-nums truncate">
+                {pdfPageCount > 0 ? `Page ${pdfPageIndex + 1} of ${pdfPageCount} · ` : ''}
+                {formatBytes(file.size)} · {formatDateTime(file.modifiedAt)}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-1 bg-slate-800/80 rounded-full px-2 py-1 border border-slate-700/60">
+              <button
+                type="button"
+                onClick={() => setPdfZoom((z) => Math.max(0.5, Number((z - 0.25).toFixed(2))))}
+                disabled={pdfZoom <= 0.5}
+                className="p-1 rounded-full hover:bg-slate-700 disabled:opacity-40"
+                aria-label="Zoom out PDF"
+              >
+                <ZoomOut size={15} />
+              </button>
+              <span className="text-[11px] font-mono tabular-nums min-w-[38px] text-center text-slate-200">
+                {Math.round(pdfZoom * 100)}%
+              </span>
+              <button
+                type="button"
+                onClick={() => setPdfZoom((z) => Math.min(3, Number((z + 0.25).toFixed(2))))}
+                disabled={pdfZoom >= 3}
+                className="p-1 rounded-full hover:bg-slate-700 disabled:opacity-40"
+                aria-label="Zoom in PDF"
+              >
+                <ZoomIn size={15} />
+              </button>
+              {pdfZoom !== 1 && (
+                <button
+                  type="button"
+                  onClick={() => setPdfZoom(1)}
+                  className="p-1 rounded-full hover:bg-slate-700 text-slate-400 hover:text-white"
+                  title="Reset zoom"
+                >
+                  <RotateCcw size={13} />
+                </button>
+              )}
+            </div>
+
+            {onDownloadFile && (
+              <button
+                type="button"
+                onClick={() => onDownloadFile(file)}
+                className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white shrink-0"
+                title="Export Copy"
+              >
+                <Download size={16} />
+              </button>
+            )}
+
+            {onOpenExternal && (
+              <button
+                type="button"
+                onClick={() => onOpenExternal(file)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 shrink-0 shadow-sm"
+                title="Open with system PDF viewer"
+              >
+                <ExternalLink size={14} />
+                <span className="hidden sm:inline">Open with</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* PDF Full-Screen Stage */}
+        <div className="flex-1 overflow-auto bg-[#0a0d13] p-2 sm:p-6 flex items-center justify-center">
+          {pdfPageCount > 0 ? (
+            <div className="flex flex-col items-center justify-center min-h-full w-full">
+              {pdfLoading || !pdfPageDataUrl ? (
+                <div className="py-24 flex flex-col items-center gap-3 text-xs text-slate-400">
+                  <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+                  <span>Rendering PDF page {pdfPageIndex + 1}...</span>
+                </div>
+              ) : (
+                <div
+                  style={{ transform: `scale(${pdfZoom})`, transformOrigin: 'top center' }}
+                  className="transition-transform duration-100 ease-out max-w-full"
+                >
+                  <img
+                    src={pdfPageDataUrl}
+                    alt={`Page ${pdfPageIndex + 1}`}
+                    className="max-w-full bg-white shadow-2xl rounded-md pointer-events-none select-none"
+                  />
+                </div>
+              )}
+            </div>
+          ) : mediaSrc ? (
+            <div className="w-full h-full flex flex-col items-center justify-center">
+              <object
+                data={mediaSrc}
+                type="application/pdf"
+                className="w-full h-full rounded-lg"
+              >
+                <div className="p-12 text-center space-y-4 max-w-md bg-[#141a24] border border-slate-800 rounded-2xl">
+                  <FileText size={44} className="mx-auto text-blue-500" />
+                  <div>
+                    <h3 className="text-base font-semibold text-white">{file.name}</h3>
+                    <p className="text-xs text-slate-400 mt-1">
+                      PDF Document Ready · {formatBytes(file.size)}
+                    </p>
+                  </div>
+                  {onOpenExternal && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenExternal(file)}
+                      className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center gap-2 mx-auto shadow-md"
+                    >
+                      <ExternalLink size={15} />
+                      <span>Open with System PDF Reader</span>
+                    </button>
+                  )}
+                </div>
+              </object>
+            </div>
+          ) : (
+            <div className="p-10 text-center space-y-4 max-w-md bg-[#141a24] border border-slate-800 rounded-2xl">
+              <FileText size={44} className="mx-auto text-blue-500" />
+              <h3 className="text-base font-semibold text-white">{file.name}</h3>
+              <p className="text-xs text-slate-400">
+                Full-screen PDF viewer ready. You can export or open with an external viewer.
+              </p>
+              {onOpenExternal && (
+                <button
+                  type="button"
+                  onClick={() => onOpenExternal(file)}
+                  className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center gap-2 mx-auto"
+                >
+                  <ExternalLink size={15} />
+                  <span>Open with External PDF App</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Bottom Page Navigation Controls */}
+        {pdfPageCount > 1 && (
+          <div className="shrink-0 bg-[#141a24] border-t border-slate-800 px-4 py-2.5 flex items-center justify-between gap-3 z-20">
+            <button
+              type="button"
+              disabled={pdfPageIndex <= 0}
+              onClick={() => setPdfPageIndex((p) => Math.max(0, p - 1))}
+              className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-35 text-xs font-medium flex items-center gap-1.5"
+            >
+              <ChevronLeft size={16} />
+              <span>Previous</span>
+            </button>
+            <div className="flex items-center gap-2 font-mono text-xs tabular-nums text-slate-300">
+              <span>Page {pdfPageIndex + 1} of {pdfPageCount}</span>
+            </div>
+            <button
+              type="button"
+              disabled={pdfPageIndex >= pdfPageCount - 1}
+              onClick={() => setPdfPageIndex((p) => Math.min(pdfPageCount - 1, p + 1))}
+              className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-35 text-xs font-medium flex items-center gap-1.5"
+            >
+              <span>Next</span>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Full-Screen / Expansive Spreadsheet Viewer (XLSX, XLS, CSV, TSV)
+  if (isSpreadsheet) {
+    const activeSheetName = spreadsheetData?.activeSheet || (spreadsheetData?.sheetNames[0] || 'Sheet1');
+    const rawRows = (spreadsheetData?.data && spreadsheetData.data[activeSheetName]) || [];
+    const query = spreadsheetSearch.trim().toLowerCase();
+
+    const filteredRows = query
+      ? rawRows.filter((r) => r.some((c) => String(c).toLowerCase().includes(query)))
+      : rawRows;
+
+    const maxCols = Math.max(1, ...rawRows.map((r) => r.length));
+    const colLabels = Array.from({ length: maxCols }, (_, i) => {
+      let label = '';
+      let num = i;
+      while (num >= 0) {
+        label = String.fromCharCode(65 + (num % 26)) + label;
+        num = Math.floor(num / 26) - 1;
+      }
+      return label;
+    });
+
+    return (
+      <div className="fixed inset-0 z-50 bg-[#0e1219] text-white flex flex-col select-none overflow-hidden">
+        {/* Top Header */}
+        <div className="shrink-0 bg-[#141a24] border-b border-slate-800 px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2.5 z-20">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-white shrink-0"
+              aria-label="Back"
+            >
+              <ArrowLeft size={19} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet size={18} className="text-emerald-400 shrink-0" />
+                <h2 className="text-sm sm:text-base font-semibold text-white truncate">
+                  {file.name}
+                </h2>
+              </div>
+              <p className="text-[11px] text-slate-400 tabular-nums truncate">
+                {rawRows.length} rows × {maxCols} cols · {formatBytes(file.size)} · {formatDateTime(file.modifiedAt)}
+              </p>
+            </div>
+          </div>
+
+          {/* Search bar & Actions */}
+          <div className="flex items-center gap-2 shrink-0">
+            <div className="relative hidden sm:flex items-center">
+              <Search size={14} className="absolute left-2.5 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search cells..."
+                value={spreadsheetSearch}
+                onChange={(e) => setSpreadsheetSearch(e.target.value)}
+                className="pl-8 pr-3 py-1.5 text-xs bg-slate-800/80 border border-slate-700 rounded-full text-slate-200 placeholder-slate-500 focus:outline-none focus:border-emerald-500 w-36 sm:w-48"
+              />
+            </div>
+
+            {onDownloadFile && (
+              <button
+                type="button"
+                onClick={() => onDownloadFile(file)}
+                className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white shrink-0"
+                title="Export File"
+              >
+                <Download size={16} />
+              </button>
+            )}
+
+            {onOpenExternal && (
+              <button
+                type="button"
+                onClick={() => onOpenExternal(file)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1.5 shrink-0 shadow-sm"
+              >
+                <ExternalLink size={14} />
+                <span className="hidden sm:inline">Open with</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Mobile search bar */}
+        <div className="sm:hidden px-3 py-2 bg-[#141a24] border-b border-slate-800">
+          <div className="relative flex items-center">
+            <Search size={14} className="absolute left-2.5 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search in table..."
+              value={spreadsheetSearch}
+              onChange={(e) => setSpreadsheetSearch(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-800/90 border border-slate-700 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Sheet Tabs Bar */}
+        {spreadsheetData && spreadsheetData.sheetNames.length > 1 && (
+          <div className="shrink-0 bg-[#12161f] border-b border-slate-800 px-3 py-1.5 flex items-center gap-1.5 overflow-x-auto">
+            {spreadsheetData.sheetNames.map((name) => {
+              const active = name === activeSheetName;
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  onClick={() =>
+                    setSpreadsheetData((prev) => (prev ? { ...prev, activeSheet: name } : null))
+                  }
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5 ${
+                    active
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-slate-800/70 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <Table size={12} />
+                  <span>{name}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Main Spreadsheet Grid */}
+        <div className="flex-1 overflow-auto bg-[#0a0d13]">
+          <div className="inline-block min-w-full align-middle">
+            <table className="min-w-full border-collapse border border-slate-800 text-xs">
+              <thead>
+                <tr className="bg-[#141a24] sticky top-0 z-10 border-b border-slate-700">
+                  <th className="w-12 p-2 border-r border-slate-800 text-center font-mono text-[11px] text-slate-500 bg-[#141a24] sticky left-0 z-20">
+                    #
+                  </th>
+                  {colLabels.map((col, idx) => (
+                    <th
+                      key={idx}
+                      className="px-3 py-2 border-r border-slate-800 text-center font-mono font-semibold text-slate-300 min-w-[100px] max-w-[220px]"
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/70 font-mono">
+                {filteredRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={maxCols + 1} className="py-16 text-center text-slate-500">
+                      No matching cells found for &ldquo;{spreadsheetSearch}&rdquo;
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRows.map((row, rIdx) => {
+                    const isEven = rIdx % 2 === 0;
+                    return (
+                      <tr
+                        key={rIdx}
+                        className={`hover:bg-emerald-950/20 transition-colors ${
+                          isEven ? 'bg-[#0f141d]' : 'bg-[#0a0d13]'
+                        }`}
+                      >
+                        <td className="p-2 border-r border-slate-800 text-center font-mono text-[11px] text-slate-500 sticky left-0 z-10 bg-[#141a24]">
+                          {rIdx + 1}
+                        </td>
+                        {colLabels.map((_, cIdx) => {
+                          const val = row[cIdx] !== undefined ? String(row[cIdx]) : '';
+                          const isMatch = query && val.toLowerCase().includes(query);
+                          return (
+                            <td
+                              key={cIdx}
+                              className={`px-3 py-2 border-r border-slate-800/60 truncate max-w-[240px] text-slate-200 ${
+                                isMatch ? 'bg-amber-500/25 text-amber-200 font-semibold' : ''
+                              }`}
+                              title={val}
+                            >
+                              {val}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Full-Screen Word Document Viewer (DOCX, DOC)
+  if (isWordDoc) {
+    const fontSizeClass =
+      docFontSize === 'sm' ? 'text-xs' : docFontSize === 'lg' ? 'text-base' : 'text-sm';
+
+    return (
+      <div className="fixed inset-0 z-50 bg-[#0e1219] text-white flex flex-col select-none overflow-hidden">
+        {/* Top Header */}
+        <div className="shrink-0 bg-[#141a24] border-b border-slate-800 px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2.5 z-20">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-white shrink-0"
+              aria-label="Back"
+            >
+              <ArrowLeft size={19} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <FileText size={18} className="text-blue-400 shrink-0" />
+                <h2 className="text-sm sm:text-base font-semibold text-white truncate">
+                  {file.name}
+                </h2>
+              </div>
+              <p className="text-[11px] text-slate-400 tabular-nums truncate">
+                {docxData?.wordCount ? `${docxData.wordCount} words · ` : ''}
+                {formatBytes(file.size)} · {formatDateTime(file.modifiedAt)}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Font Sizing Controls */}
+            <div className="flex items-center gap-1 bg-slate-800/80 rounded-full px-2 py-1 border border-slate-700/60">
+              <button
+                type="button"
+                onClick={() => setDocFontSize((s) => (s === 'lg' ? 'base' : 'sm'))}
+                className="px-2 py-0.5 rounded text-xs font-semibold text-slate-300 hover:text-white"
+                title="Smaller text"
+              >
+                A-
+              </button>
+              <span className="text-[10px] text-slate-500">|</span>
+              <button
+                type="button"
+                onClick={() => setDocFontSize((s) => (s === 'sm' ? 'base' : 'lg'))}
+                className="px-2 py-0.5 rounded text-xs font-semibold text-slate-300 hover:text-white"
+                title="Larger text"
+              >
+                A+
+              </button>
+            </div>
+
+            {onDownloadFile && (
+              <button
+                type="button"
+                onClick={() => onDownloadFile(file)}
+                className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white shrink-0"
+                title="Export File"
+              >
+                <Download size={16} />
+              </button>
+            )}
+
+            {onOpenExternal && (
+              <button
+                type="button"
+                onClick={() => onOpenExternal(file)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white flex items-center gap-1.5 shrink-0 shadow-sm"
+              >
+                <ExternalLink size={14} />
+                <span className="hidden sm:inline">Open with</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Document Content Viewport */}
+        <div className="flex-1 overflow-auto bg-[#0a0d13] p-4 sm:p-8 flex justify-center">
+          <div className="w-full max-w-3xl bg-[#141a24] border border-slate-800 rounded-2xl shadow-2xl p-6 sm:p-12 space-y-4 my-auto min-h-[500px]">
+            <div className="border-b border-slate-800 pb-4 mb-4">
+              <h1 className="text-xl sm:text-2xl font-bold text-white mb-1">
+                {docxData?.title || file.name.replace(/\.[^/.]+$/, '')}
+              </h1>
+              <p className="text-xs text-blue-400 font-medium">Microsoft Word Document</p>
+            </div>
+
+            {docxData?.html ? (
+              <div
+                className={`text-slate-300 leading-relaxed space-y-3 ${fontSizeClass}`}
+                dangerouslySetInnerHTML={{ __html: docxData.html }}
+              />
+            ) : (
+              <div className="py-20 text-center space-y-3">
+                <FileText size={38} className="mx-auto text-blue-400" />
+                <p className="text-sm font-semibold text-slate-200">Preparing Word Document...</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Full-Screen Archive Viewer & Extractor (ZIP, RAR, 7Z, TAR, GZ)
+  if (isArchive) {
+    const isRar = fileExt === 'rar';
+    const totalUncompressed = archiveEntries.reduce((acc, e) => acc + e.uncompressedSize, 0);
+    const totalFiles = archiveEntries.filter((e) => !e.isFolder).length;
+    const totalFolders = archiveEntries.filter((e) => e.isFolder).length;
+    const compressionRatio =
+      file.size > 0 && totalUncompressed > file.size
+        ? Math.round(((totalUncompressed - file.size) / totalUncompressed) * 100)
+        : 0;
+
+    const query = archiveSearch.trim().toLowerCase();
+    const filteredEntries = query
+      ? archiveEntries.filter((e) => e.path.toLowerCase().includes(query))
+      : archiveEntries;
+
+    const handleStartExtraction = () => {
+      setIsExtracting(true);
+      setExtractProgress(20);
+
+      const t1 = setTimeout(() => setExtractProgress(50), 160);
+      const t2 = setTimeout(() => setExtractProgress(85), 340);
+      const t3 = setTimeout(() => {
+        setExtractProgress(100);
+        setIsExtracting(false);
+        setExtractedSuccess(true);
+        if (onExtractArchive) {
+          onExtractArchive(
+            file,
+            archiveEntries.map((e) => ({
+              name: e.name,
+              size: e.uncompressedSize,
+              isFolder: e.isFolder,
+              content: e.content,
+            }))
+          );
+        }
+      }, 500);
+
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    };
+
+    return (
+      <div className="fixed inset-0 z-50 bg-[#0e1219] text-white flex flex-col select-none overflow-hidden">
+        {/* Top Header */}
+        <div className="shrink-0 bg-[#141a24] border-b border-slate-800 px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2.5 z-20">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={onClose}
+              className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 text-white shrink-0"
+              aria-label="Back"
+            >
+              <ArrowLeft size={19} />
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <Archive size={18} className={isRar ? 'text-amber-400' : 'text-blue-400'} />
+                <h2 className="text-sm sm:text-base font-semibold text-white truncate">
+                  {file.name}
+                </h2>
+              </div>
+              <p className="text-[11px] text-slate-400 tabular-nums truncate">
+                {isRar ? 'RAR Archive' : 'ZIP Archive'} · {formatBytes(file.size)} · {formatDateTime(file.modifiedAt)}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {onDownloadFile && (
+              <button
+                type="button"
+                onClick={() => onDownloadFile(file)}
+                className="p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white shrink-0"
+                title="Export Archive"
+              >
+                <Download size={16} />
+              </button>
+            )}
+
+            {onOpenExternal && (
+              <button
+                type="button"
+                onClick={() => onOpenExternal(file)}
+                className="px-3 py-1.5 rounded-full text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-white flex items-center gap-1.5 shrink-0"
+              >
+                <ExternalLink size={14} />
+                <span className="hidden sm:inline">Open with</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Archive Summary Bar */}
+        <div className="shrink-0 bg-[#12161f] border-b border-slate-800 px-4 sm:px-6 py-3.5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+                  isRar
+                    ? 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                    : 'bg-blue-500/15 text-blue-400 border border-blue-500/30'
+                }`}
+              >
+                <Archive size={24} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-slate-200">
+                    {isRar ? 'RAR' : 'ZIP'}
+                  </span>
+                  <span className="text-xs font-medium text-slate-300">
+                    {totalFiles} files, {totalFolders} folders
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Extracted size: <strong className="text-slate-200 font-mono">{formatBytes(totalUncompressed)}</strong>
+                  {compressionRatio > 0 && (
+                    <span className="text-emerald-400 ml-1.5 font-semibold">(-{compressionRatio}%)</span>
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Extract Buttons */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={isExtracting}
+                onClick={handleStartExtraction}
+                className="px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white flex items-center gap-2 shadow-sm transition-all"
+              >
+                <Layers size={15} />
+                <span>Extract All</span>
+              </button>
+              <button
+                type="button"
+                disabled={isExtracting}
+                onClick={handleStartExtraction}
+                className="px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 text-slate-200 flex items-center gap-1.5"
+              >
+                <Archive size={14} />
+                <span>Extract Here</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Extraction Progress or Success notification */}
+          {isExtracting && (
+            <div className="p-3 bg-blue-950/40 border border-blue-800/60 rounded-xl space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-medium text-blue-300">
+                <span>Extracting archive entries...</span>
+                <span>{extractProgress}%</span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 rounded-full transition-all duration-200"
+                  style={{ width: `${extractProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {extractedSuccess && (
+            <div className="p-2.5 bg-emerald-950/50 border border-emerald-800/60 rounded-xl flex items-center justify-between text-xs text-emerald-300">
+              <div className="flex items-center gap-2">
+                <Check size={16} className="text-emerald-400" />
+                <span>Extracted successfully! Files are now available in your folders.</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExtractedSuccess(false)}
+                className="text-emerald-400 hover:underline font-medium"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Search bar inside archive */}
+          <div className="relative flex items-center">
+            <Search size={14} className="absolute left-3 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search files inside archive..."
+              value={archiveSearch}
+              onChange={(e) => setArchiveSearch(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        </div>
+
+        {/* Entries list */}
+        <div className="flex-1 overflow-auto bg-[#0a0d13] divide-y divide-slate-800/70">
+          {filteredEntries.length === 0 ? (
+            <div className="py-20 text-center text-xs text-slate-500">
+              No files found inside archive matching &ldquo;{archiveSearch}&rdquo;
+            </div>
+          ) : (
+            filteredEntries.map((entry) => (
+              <div
+                key={entry.id}
+                className="px-4 sm:px-6 py-2.5 flex items-center justify-between gap-3 hover:bg-[#141a24] transition-colors"
+              >
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  {entry.isFolder ? (
+                    <Folder size={18} className="text-amber-400 shrink-0" />
+                  ) : (
+                    <FileGlyph size={18} className="text-blue-400 shrink-0" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs sm:text-sm font-medium text-slate-200 truncate">
+                      {entry.path}
+                    </p>
+                    <p className="text-[11px] text-slate-400 tabular-nums">
+                      {entry.isFolder
+                        ? 'Folder'
+                        : `${formatBytes(entry.uncompressedSize)}`} · {formatDateTime(entry.modifiedAt)}
+                    </p>
+                  </div>
+                </div>
+
+                {!entry.isFolder && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onExtractArchive) {
+                        onExtractArchive(file, [
+                          {
+                            name: entry.name,
+                            size: entry.uncompressedSize,
+                            isFolder: false,
+                            content: entry.content,
+                          },
+                        ]);
+                        setExtractedSuccess(true);
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white shrink-0 border border-slate-700/60"
+                  >
+                    Extract
+                  </button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80">
       <div className="w-full max-w-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
@@ -1419,103 +2251,6 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
                 </p>
               </div>
               <audio src={mediaSrc} controls autoPlay className="w-full max-w-md" />
-            </div>
-          ) : isPdf ? (
-            <div className="flex-1 flex flex-col min-h-[380px]">
-              {pdfPageCount > 0 ? (
-                <>
-                  <div className="flex-1 overflow-auto p-4 flex items-start justify-center bg-slate-200 dark:bg-slate-950">
-                    {pdfLoading || !pdfPageDataUrl ? (
-                      <div className="py-16 flex flex-col items-center gap-2 text-xs text-slate-500">
-                        <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
-                        <span>Rendering PDF page {pdfPageIndex + 1}...</span>
-                      </div>
-                    ) : (
-                      <img
-                        src={pdfPageDataUrl}
-                        alt={`Page ${pdfPageIndex + 1}`}
-                        style={{ width: `${Math.round(pdfZoom * 100)}%` }}
-                        className="max-w-none bg-white shadow-lg rounded-md"
-                      />
-                    )}
-                  </div>
-                  <div className="px-4 py-2.5 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 text-xs">
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        disabled={pdfPageIndex <= 0}
-                        onClick={() => setPdfPageIndex((p) => Math.max(0, p - 1))}
-                        className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 disabled:opacity-40"
-                        aria-label="Previous page"
-                      >
-                        <ChevronLeft size={16} />
-                      </button>
-                      <span className="px-2 font-mono tabular-nums text-slate-700 dark:text-slate-200">
-                        Page {pdfPageIndex + 1} / {pdfPageCount}
-                      </span>
-                      <button
-                        type="button"
-                        disabled={pdfPageIndex >= pdfPageCount - 1}
-                        onClick={() => setPdfPageIndex((p) => Math.min(pdfPageCount - 1, p + 1))}
-                        className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 disabled:opacity-40"
-                        aria-label="Next page"
-                      >
-                        <ChevronRight size={16} />
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setPdfZoom((z) => Math.max(0.75, Number((z - 0.25).toFixed(2))))}
-                        className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
-                        aria-label="Zoom out PDF"
-                      >
-                        <ZoomOut size={15} />
-                      </button>
-                      <span className="font-mono tabular-nums text-slate-600 dark:text-slate-300">
-                        {Math.round(pdfZoom * 100)}%
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setPdfZoom((z) => Math.min(2.5, Number((z + 0.25).toFixed(2))))}
-                        className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
-                        aria-label="Zoom in PDF"
-                      >
-                        <ZoomIn size={15} />
-                      </button>
-                    </div>
-                  </div>
-                </>
-              ) : mediaSrc ? (
-                <object
-                  data={mediaSrc}
-                  type="application/pdf"
-                  className="w-full flex-1 min-h-[420px]"
-                >
-                  <div className="p-10 text-center space-y-3">
-                    <FileText size={36} className="mx-auto text-blue-600" />
-                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                      PDF Document Ready
-                    </p>
-                    {onOpenExternal && (
-                      <button
-                        type="button"
-                        onClick={() => onOpenExternal(file)}
-                        className="px-4 py-2 rounded-xl text-xs font-semibold bg-blue-600 text-white"
-                      >
-                        Open with System PDF Viewer
-                      </button>
-                    )}
-                  </div>
-                </object>
-              ) : (
-                <div className="p-10 text-center space-y-3">
-                  <FileText size={36} className="mx-auto text-blue-600" />
-                  <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                    Unable to preview PDF directly in browser.
-                  </p>
-                </div>
-              )}
             </div>
           ) : isText ? (
             <div className="flex-1 flex flex-col min-h-[340px]">
