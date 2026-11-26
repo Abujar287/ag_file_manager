@@ -16,8 +16,8 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { AnalyzerToolType, FileNode } from '../types/fileManager';
-import { formatBytes, formatDateTime } from '../utils/formatters';
+import { AnalyzerToolType, FileNode, SortBy, SortOrder } from '../types/fileManager';
+import { formatBytes, formatDateTime, sortFileNodes } from '../utils/formatters';
 import { FileIcon } from './FileIcon';
 
 interface AnalyzerViewProps {
@@ -26,6 +26,8 @@ interface AnalyzerViewProps {
   nativeEmptyFolders?: FileNode[];
   emptyFoldersLoading?: boolean;
   showThumbnails: boolean;
+  sortBy?: SortBy;
+  sortOrder?: SortOrder;
   onBackHome: () => void;
   onSelectTool?: (tool: AnalyzerToolType) => void;
   onRefreshEmptyFolders?: () => void;
@@ -175,6 +177,8 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
   nativeEmptyFolders,
   emptyFoldersLoading = false,
   showThumbnails,
+  sortBy = 'name',
+  sortOrder = 'asc',
   onBackHome,
   onSelectTool,
   onRefreshEmptyFolders,
@@ -341,62 +345,62 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
       }
     }
 
-    const bySizeDesc = (a: FileNode, b: FileNode) => b.size - a.size;
-    videoList.sort(bySizeDesc);
-    archiveList.sort(bySizeDesc);
-    imageList.sort(bySizeDesc);
-    audioList.sort(bySizeDesc);
-    apkList.sort(bySizeDesc);
-    docList.sort(bySizeDesc);
+    const sortList = (list: FileNode[]) =>
+      sortFileNodes(list, sortBy, sortOrder, files, true);
 
     const groups = [
-      { id: 'videos', label: 'Videos', color: 'bg-rose-500', bytes: videoBytes, items: videoList },
+      { id: 'videos', label: 'Videos', color: 'bg-rose-500', bytes: videoBytes, items: sortList(videoList) },
       {
         id: 'archives',
         label: 'Archives & Other',
         color: 'bg-orange-500',
         bytes: archiveBytes,
-        items: archiveList,
+        items: sortList(archiveList),
       },
-      { id: 'images', label: 'Images', color: 'bg-emerald-500', bytes: imageBytes, items: imageList },
-      { id: 'audio', label: 'Audio', color: 'bg-violet-500', bytes: audioBytes, items: audioList },
-      { id: 'apk', label: 'APK Files', color: 'bg-teal-500', bytes: apkBytes, items: apkList },
+      { id: 'images', label: 'Images', color: 'bg-emerald-500', bytes: imageBytes, items: sortList(imageList) },
+      { id: 'audio', label: 'Audio', color: 'bg-violet-500', bytes: audioBytes, items: sortList(audioList) },
+      { id: 'apk', label: 'APK Files', color: 'bg-teal-500', bytes: apkBytes, items: sortList(apkList) },
       {
         id: 'docs',
         label: 'Documents & Text',
         color: 'bg-blue-500',
         bytes: docBytes,
-        items: docList,
+        items: sortList(docList),
       },
     ];
     const totalAnalyzed = groups.reduce((acc, g) => acc + g.bytes, 0);
 
-    large.sort(bySizeDesc);
-    const recent = [...nonFolderFiles]
-      .sort((a, b) => b.modifiedAt - a.modifiedAt)
-      .slice(0, 40);
-    const empty = nativeEmptyFolders
-      ? nativeEmptyFolders.filter((n) => !n.trashed)
-      : activeFiles.filter(
-          (n) =>
-            n.kind === 'folder' &&
-            n.parentId !== null &&
-            !n.hidden &&
-            !nonEmptyParentIds.has(n.id)
-        );
-    const dups = Array.from(hashGroups.values()).filter((g) => g.length > 1);
+    const sortedLarge = sortList(large);
+    const recent = sortList(
+      [...nonFolderFiles].sort((a, b) => b.modifiedAt - a.modifiedAt).slice(0, 40)
+    );
+    const empty = sortList(
+      nativeEmptyFolders
+        ? nativeEmptyFolders.filter((n) => !n.trashed)
+        : activeFiles.filter(
+            (n) =>
+              n.kind === 'folder' &&
+              n.parentId !== null &&
+              !n.hidden &&
+              !nonEmptyParentIds.has(n.id)
+          )
+    );
+    const sortedCache = sortList(cache);
+    const dups = Array.from(hashGroups.values())
+      .filter((g) => g.length > 1)
+      .map((g) => sortList(g));
 
     return {
       breakdownGroups: groups,
       totalAnalyzedBytes: totalAnalyzed,
-      largeFiles: large,
+      largeFiles: sortedLarge,
       recentFiles: recent,
       emptyFolders: empty,
-      cacheFiles: cache,
+      cacheFiles: sortedCache,
       totalCacheBytes: cacheBytesSum,
       duplicateGroups: dups,
     };
-  }, [files, nativeEmptyFolders]);
+  }, [files, nativeEmptyFolders, sortBy, sortOrder]);
 
   useEffect(() => {
     const targetCount =

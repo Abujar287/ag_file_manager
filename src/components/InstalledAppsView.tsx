@@ -1,6 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft,
   Check,
   ExternalLink,
   FolderDown,
@@ -12,8 +11,8 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { InstalledApp } from '../types/fileManager';
-import { formatBytes } from '../utils/formatters';
+import { InstalledApp, SortBy, SortOrder, ViewMode } from '../types/fileManager';
+import { formatBytes, formatDateTime } from '../utils/formatters';
 import {
   hasNativeMultiUninstall,
   isRunningInAndroidApp,
@@ -26,8 +25,9 @@ import {
 interface InstalledAppsViewProps {
   apps: InstalledApp[];
   loading: boolean;
-  onBack: () => void;
-  onRefresh: () => void;
+  sortBy?: SortBy;
+  sortOrder?: SortOrder;
+  viewMode?: ViewMode;
   onOpenApkFiles: () => void;
   onBackupApk: (app: InstalledApp) => void;
   onShareApk: (app: InstalledApp) => void;
@@ -37,14 +37,15 @@ interface InstalledAppsViewProps {
 export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
   apps,
   loading,
-  onBack,
-  onRefresh,
+  sortBy = 'name',
+  sortOrder = 'asc',
+  viewMode = 'list',
   onOpenApkFiles,
   onBackupApk,
   onShareApk,
   onShowToast,
 }) => {
-  const [filterMode, setFilterMode] = useState<'all' | 'user' | 'system'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'user' | 'system' | 'without_system'>('all');
   const [query, setQuery] = useState('');
   const [selectedApp, setSelectedApp] = useState<InstalledApp | null>(null);
   const [selectedPackages, setSelectedPackages] = useState<string[]>([]);
@@ -62,7 +63,7 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
 
   useEffect(() => {
     setVisibleLimit(40);
-  }, [filterMode, query]);
+  }, [filterMode, query, sortBy, sortOrder]);
 
   // JS-side sequential uninstall fallback when running on older native bridges without uninstallApps()
   useEffect(() => {
@@ -103,8 +104,10 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
 
   const filteredApps = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return apps.filter((app) => {
-      if (filterMode === 'user' && app.isSystemApp) return false;
+    const list = apps.filter((app) => {
+      if ((filterMode === 'user' || filterMode === 'without_system') && app.isSystemApp) {
+        return false;
+      }
       if (filterMode === 'system' && !app.isSystemApp) return false;
       if (!q) return true;
       return (
@@ -112,7 +115,29 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
         app.packageName.toLowerCase().includes(q)
       );
     });
-  }, [apps, filterMode, query]);
+
+    const dir = sortOrder === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === 'name') {
+        cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      } else if (sortBy === 'size') {
+        cmp = a.size - b.size;
+      } else if (sortBy === 'date') {
+        cmp = a.modifiedAt - b.modifiedAt;
+      } else if (sortBy === 'type') {
+        const typeCmp = Number(a.isSystemApp) - Number(b.isSystemApp);
+        cmp =
+          typeCmp !== 0
+            ? typeCmp
+            : a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (cmp === 0) {
+        cmp = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+      }
+      return cmp * dir;
+    });
+  }, [apps, filterMode, query, sortBy, sortOrder]);
 
   const userCount = useMemo(() => apps.filter((a) => !a.isSystemApp).length, [apps]);
   const systemCount = useMemo(() => apps.filter((a) => a.isSystemApp).length, [apps]);
@@ -245,42 +270,6 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
 
   return (
     <div className="max-w-5xl mx-auto pb-24">
-      {/* Header Bar */}
-      <div className="px-4 sm:px-6 py-2.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <button
-            type="button"
-            onClick={onBack}
-            className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
-            aria-label="Back"
-          >
-            <ArrowLeft size={18} />
-          </button>
-          <h2 className="text-sm sm:text-base font-semibold text-slate-900 dark:text-slate-100 truncate">
-            Installed Apps ({apps.length})
-          </h2>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={onOpenApkFiles}
-            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950/60"
-          >
-            APK Files
-          </button>
-          {inAndroid && (
-            <button
-              type="button"
-              onClick={onRefresh}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
-            >
-              Refresh
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* Filter & Search Bar */}
       <div className="px-4 sm:px-6 py-3 space-y-2.5">
         <div className="relative">
@@ -308,17 +297,18 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
         </div>
 
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 overflow-x-auto">
+          <div className="flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {[
               { id: 'all' as const, label: `All (${apps.length})` },
               { id: 'user' as const, label: `User (${userCount})` },
               { id: 'system' as const, label: `System (${systemCount})` },
+              { id: 'without_system' as const, label: `Without System (${userCount})` },
             ].map((tab) => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setFilterMode(tab.id)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap shrink-0 ${
                   filterMode === tab.id
                     ? 'bg-blue-600 text-white'
                     : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300'
@@ -406,6 +396,75 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
             </button>
           )}
         </div>
+      ) : viewMode === 'grid' ? (
+        <div className="px-4 sm:px-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 sm:gap-3">
+          {renderedApps.map((app) => {
+            const isSelected = selectedSet.has(app.packageName);
+            return (
+              <div
+                key={app.packageName}
+                onPointerDown={(e) => handlePointerDown(app.packageName, e)}
+                onPointerMove={handlePointerMove}
+                onPointerUp={cancelLongPress}
+                onPointerLeave={cancelLongPress}
+                onPointerCancel={cancelLongPress}
+                onClick={() => handleRowClick(app)}
+                className={`cv-tile relative p-3 rounded-2xl border cursor-pointer select-none flex flex-col items-center text-center gap-2 ${
+                  isSelected
+                    ? 'bg-blue-50/90 dark:bg-blue-950/40 border-blue-500 ring-1 ring-blue-500/40'
+                    : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleSelect(app.packageName);
+                  }}
+                  aria-label={`Select ${app.name}`}
+                  className="absolute top-2 right-2 min-w-[24px] min-h-[24px] flex items-center justify-center"
+                >
+                  {isSelected ? (
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center">
+                      <Check size={12} strokeWidth={3} />
+                    </span>
+                  ) : isSelecting ? (
+                    <span className="w-4 h-4 rounded-full border-2 border-slate-300 dark:border-slate-600" />
+                  ) : null}
+                </button>
+
+                {app.iconUrl ? (
+                  <img
+                    src={app.iconUrl}
+                    alt={app.name}
+                    loading="lazy"
+                    decoding="async"
+                    className="w-12 h-12 rounded-xl object-cover bg-slate-100 dark:bg-slate-800"
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                    <Package size={24} />
+                  </div>
+                )}
+
+                <div className="w-full min-w-0">
+                  <div className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+                    {app.name}
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums mt-0.5 truncate">
+                    {formatBytes(app.size)}
+                    {app.isSystemApp ? ' · System' : ''}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {visibleLimit < filteredApps.length && (
+            <div ref={sentinelRef} className="col-span-full py-4 text-center text-xs text-slate-400">
+              Loading more apps...
+            </div>
+          )}
+        </div>
       ) : (
         <div className="divide-y divide-slate-200/70 dark:divide-slate-800/80 bg-white dark:bg-slate-900 sm:mx-6 sm:rounded-2xl sm:border sm:border-slate-200 sm:dark:border-slate-800 overflow-hidden">
           {renderedApps.map((app) => {
@@ -456,6 +515,9 @@ export const InstalledAppsView: React.FC<InstalledAppsViewProps> = memo(({
                   <div className="text-[11px] text-slate-500 dark:text-slate-400 tabular-nums mt-0.5">
                     {app.versionName ? `v${app.versionName} · ` : ''}
                     {formatBytes(app.size)}
+                    {viewMode === 'detail' && app.modifiedAt
+                      ? ` · ${formatDateTime(app.modifiedAt)}`
+                      : ''}
                   </div>
                 </div>
 

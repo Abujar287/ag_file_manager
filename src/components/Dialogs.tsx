@@ -9,7 +9,11 @@ import {
   ExternalLink,
   File as FileGlyph,
   FileText,
+  Folder,
+  FolderOpen,
+  HardDrive,
   Maximize2,
+  MemoryStick,
   Minimize2,
   Music,
   Pause,
@@ -38,43 +42,198 @@ import { FileIcon } from './FileIcon';
 
 interface NewItemDialogProps {
   type: 'folder' | 'text' | 'file' | null;
+  files: FileNode[];
+  defaultParentId: string;
+  sdCardMounted: boolean;
+  onBrowseFolder?: (folderId: string) => void;
   onCancel: () => void;
-  onCreate: (name: string, type: 'folder' | 'text' | 'file') => void;
+  onCreate: (name: string, type: 'folder' | 'text' | 'file', targetParentId: string) => void;
 }
 
-export const NewItemDialog: React.FC<NewItemDialogProps> = ({ type, onCancel, onCreate }) => {
+export const NewItemDialog: React.FC<NewItemDialogProps> = ({
+  type,
+  files,
+  defaultParentId,
+  sdCardMounted,
+  onBrowseFolder,
+  onCancel,
+  onCreate,
+}) => {
   const [name, setName] = useState('');
+  const [selectedParentId, setSelectedParentId] = useState<string>(defaultParentId);
+  const [pathPickerOpen, setPathPickerOpen] = useState(false);
 
   useEffect(() => {
     if (type === 'folder') setName('New Folder');
     else if (type === 'text') setName('note.txt');
     else if (type === 'file') setName('untitled.dat');
-  }, [type]);
+    if (type) {
+      setSelectedParentId(defaultParentId || 'internal_root');
+      setPathPickerOpen(false);
+    }
+  }, [type, defaultParentId]);
+
+  const byId = useMemo(() => new Map(files.map((n) => [n.id, n])), [files]);
+
+  const ancestors = useMemo(() => {
+    const list: FileNode[] = [];
+    let curr = byId.get(selectedParentId);
+    let guard = 0;
+    while (curr && guard < 30) {
+      list.unshift(curr);
+      curr = curr.parentId ? byId.get(curr.parentId) : undefined;
+      guard++;
+    }
+    return list;
+  }, [byId, selectedParentId]);
+
+  const childFolders = useMemo(() => {
+    return files
+      .filter((n) => n.kind === 'folder' && !n.trashed && n.parentId === selectedParentId)
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+  }, [files, selectedParentId]);
 
   if (!type) return null;
 
   const title =
     type === 'folder' ? 'New Folder' : type === 'text' ? 'New Text File' : 'New File';
+  const currentPath = getNodePath(selectedParentId, files);
+
+  const selectFolder = (folderId: string) => {
+    setSelectedParentId(folderId);
+    onBrowseFolder?.(folderId);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-      <div className="w-full max-w-sm bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-6 space-y-4">
+      <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-5 sm:p-6 space-y-4 max-h-[88vh] flex flex-col">
         <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">{title}</h2>
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            if (name.trim()) onCreate(name.trim(), type);
+            if (name.trim()) onCreate(name.trim(), type, selectedParentId);
           }}
-          className="space-y-4"
+          className="space-y-4 flex-1 min-h-0 flex flex-col"
         >
-          <input
-            type="text"
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
-          />
-          <div className="flex justify-end gap-2">
+          <div className="space-y-1.5">
+            <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400">
+              Name
+            </label>
+            <input
+              type="text"
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-sm text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
+            />
+          </div>
+
+          <div className="space-y-2 flex-1 min-h-0 flex flex-col">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                Save Location
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !pathPickerOpen;
+                  setPathPickerOpen(next);
+                  if (next) onBrowseFolder?.(selectedParentId);
+                }}
+                className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+              >
+                <FolderOpen size={13} />
+                <span>{pathPickerOpen ? 'Hide Path Picker' : 'Choose Path'}</span>
+              </button>
+            </div>
+
+            <div className="px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+              <span className="text-xs font-mono text-slate-700 dark:text-slate-300 truncate">
+                {currentPath}
+              </span>
+            </div>
+
+            {pathPickerOpen && (
+              <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col max-h-56 bg-white dark:bg-slate-950">
+                <div className="px-3 py-2 bg-slate-50 dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => selectFolder('internal_root')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 ${
+                      !currentPath.startsWith('/storage/sdcard1')
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    <HardDrive size={12} />
+                    <span>Internal</span>
+                  </button>
+                  {sdCardMounted && (
+                    <button
+                      type="button"
+                      onClick={() => selectFolder('sd_root')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 ${
+                        currentPath.startsWith('/storage/sdcard1')
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      <MemoryStick size={12} />
+                      <span>External</span>
+                    </button>
+                  )}
+                </div>
+
+                {ancestors.length > 0 && (
+                  <div className="px-3 py-1.5 border-b border-slate-100 dark:border-slate-800 flex items-center gap-1 overflow-x-auto text-[11px]">
+                    {ancestors.map((seg, idx) => (
+                      <React.Fragment key={seg.id}>
+                        {idx > 0 && <ChevronRight size={12} className="text-slate-400 shrink-0" />}
+                        <button
+                          type="button"
+                          onClick={() => selectFolder(seg.id)}
+                          className={`px-1 py-0.5 rounded whitespace-nowrap ${
+                            idx === ancestors.length - 1
+                              ? 'font-semibold text-blue-600 dark:text-blue-400'
+                              : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                          }`}
+                        >
+                          {seg.name}
+                        </button>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/80">
+                  {childFolders.length === 0 ? (
+                    <div className="py-5 px-3 text-center text-xs text-slate-500 dark:text-slate-400">
+                      No subfolders here. Item will be created in this folder.
+                    </div>
+                  ) : (
+                    childFolders.map((folder) => (
+                      <button
+                        key={folder.id}
+                        type="button"
+                        onClick={() => selectFolder(folder.id)}
+                        className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left hover:bg-slate-50 dark:hover:bg-slate-900"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Folder size={16} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                          <span className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">
+                            {folder.name}
+                          </span>
+                        </div>
+                        <ChevronRight size={14} className="text-slate-400 shrink-0" />
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
             <button
               type="button"
               onClick={onCancel}

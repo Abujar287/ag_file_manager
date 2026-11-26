@@ -14,7 +14,7 @@ export const AppLogo: React.FC<AppLogoProps> = ({ size = 32, className = '' }) =
       <img
         src="./logo.png"
         alt="AG File Manager Logo"
-        className="w-full h-full object-cover scale-[1.02]"
+        className="w-full h-full object-contain"
       />
     </div>
   );

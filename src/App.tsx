@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Home, Menu } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Home } from 'lucide-react';
 import {
   ActiveScreen,
   AnalyzerToolType,
@@ -1172,9 +1172,14 @@ export default function App() {
     setViewingFile(file);
   }, [showToast]);
 
-  const handleCreateNewItem = (name: string, type: 'folder' | 'text' | 'file') => {
+  const handleCreateNewItem = (
+    name: string,
+    type: 'folder' | 'text' | 'file',
+    explicitParentId?: string
+  ) => {
     const targetParentId =
-      activeScreen.type === 'folder' ? activeScreen.folderId : 'internal_root';
+      explicitParentId ||
+      (activeScreen.type === 'folder' ? activeScreen.folderId : 'internal_root');
     const bridge = getNativeBridge();
     if (bridge) {
       const parentPath = getNodePath(targetParentId, files);
@@ -1185,7 +1190,7 @@ export default function App() {
       setNewItemType(null);
       if (ok) {
         loadNativeFolder(targetParentId, parentPath);
-        showToast(`Created ${name}`);
+        showToast(`Created ${name} in ${parentPath}`);
       } else {
         showToast(`Failed to create ${name}`);
       }
@@ -1206,7 +1211,7 @@ export default function App() {
 
     setFiles((prev) => [newNode, ...prev]);
     setNewItemType(null);
-    showToast(`Created ${name}`);
+    showToast(`Created ${name} in ${getNodePath(targetParentId, files)}`);
   };
 
   const handleMoveFilesToFolder = useCallback((ids: string[], targetFolderId: string) => {
@@ -1949,12 +1954,11 @@ export default function App() {
       return;
     }
     const canSwipeLeftToRight =
-      prevWindowOnLeft !== null ||
-      currentWindowIdx === 0 ||
-      searchOpen ||
-      utilityScreen !== null
-        ? state.startX <= Math.max(280, window.innerWidth * 0.85)
-        : state.startX <= 96;
+      (prevWindowOnLeft !== null ||
+        currentWindowIdx === 0 ||
+        searchOpen ||
+        utilityScreen !== null) &&
+      state.startX <= Math.max(280, window.innerWidth * 0.85);
 
     if (dx > 8 && dx > Math.abs(dy) * 1.15 && canSwipeLeftToRight) {
       const clamped = Math.min(110, dx);
@@ -1990,8 +1994,6 @@ export default function App() {
         setActiveWindowId(prevWindowOnLeft.window.id);
       } else if (currentWindowIdx === 0) {
         setActiveWindowId(null);
-      } else if (isHomeActive && state.startX <= 96) {
-        setDrawerOpen(true);
       }
     } else if (state?.active && state.lastDx <= -64 && nextWindowOnRight) {
       setSearchOpen(false);
@@ -2009,7 +2011,6 @@ export default function App() {
     prevWindowOnLeft,
     nextWindowOnRight,
     currentWindowIdx,
-    isHomeActive,
     syncScreenSideEffects,
     updateSwipeIndicator,
     updateRightSwipeIndicator,
@@ -2063,10 +2064,6 @@ export default function App() {
   const handleOpenApkFilesMemo = useCallback(
     () => navigateInActiveTab({ type: 'category', category: 'apk_files' }),
     [navigateInActiveTab]
-  );
-  const handleRefreshAppsMemo = useCallback(
-    () => loadInstalledApps(true),
-    [loadInstalledApps]
   );
   const handleRequestPermissionMemo = useCallback(() => setStoragePermissionOpen(true), []);
   const handleCopyMemo = useCallback(
@@ -2132,15 +2129,10 @@ export default function App() {
               W{prevWindowOnLeft.index + 1} · {prevWindowOnLeft.window.title}
             </span>
           </>
-        ) : currentWindowIdx === 0 || searchOpen || utilityScreen !== null ? (
+        ) : (
           <>
             <Home size={18} className="shrink-0" />
             <span className="text-xs font-semibold">Home</span>
-          </>
-        ) : (
-          <>
-            <Menu size={18} className="shrink-0" />
-            <span className="text-xs font-semibold">Menu</span>
           </>
         )}
       </div>
@@ -2262,10 +2254,6 @@ export default function App() {
               sdCardMounted={settings.sdCardMounted}
               storageStats={storageStats}
               hasPermission={hasStoragePermission}
-              openWindows={windows}
-              maxWindows={MAX_WINDOWS}
-              onSelectWindow={handleSelectWindow}
-              onCloseWindow={handleCloseWindow}
               onRequestPermission={handleRequestPermissionMemo}
               onOpenFolder={handleOpenFolderMemo}
               onOpenTool={handleOpenToolMemo}
@@ -2275,8 +2263,9 @@ export default function App() {
             <InstalledAppsView
               apps={installedApps}
               loading={installedAppsLoading}
-              onBack={handleBackStepMemo}
-              onRefresh={handleRefreshAppsMemo}
+              sortBy={settings.sortBy}
+              sortOrder={settings.sortOrder}
+              viewMode={settings.viewMode}
               onOpenApkFiles={handleOpenApkFilesMemo}
               onBackupApk={handleBackupAppApk}
               onShareApk={handleShareAppApk}
@@ -2320,6 +2309,8 @@ export default function App() {
               nativeEmptyFolders={isRunningInAndroidApp() ? nativeEmptyFolders : undefined}
               emptyFoldersLoading={emptyFoldersLoading}
               showThumbnails={settings.showThumbnails}
+              sortBy={settings.sortBy}
+              sortOrder={settings.sortOrder}
               onBackHome={handleBackStepMemo}
               onSelectTool={handleSelectAnalyzerTabMemo}
               onRefreshEmptyFolders={isRunningInAndroidApp() ? loadNativeEmptyFolders : undefined}
@@ -2365,6 +2356,14 @@ export default function App() {
 
       <NewItemDialog
         type={newItemType}
+        files={files}
+        defaultParentId={activeScreen.type === 'folder' ? activeScreen.folderId : 'internal_root'}
+        sdCardMounted={settings.sdCardMounted}
+        onBrowseFolder={(folderId) => {
+          if (isRunningInAndroidApp()) {
+            loadNativeFolder(folderId);
+          }
+        }}
         onCancel={() => setNewItemType(null)}
         onCreate={handleCreateNewItem}
       />

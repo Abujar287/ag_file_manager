@@ -16,10 +16,9 @@ import {
   Sparkles,
   Trash2,
   Video,
-  X,
   Zap,
 } from 'lucide-react';
-import { AnalyzerToolType, CategoryType, FileNode, TabWindow } from '../types/fileManager';
+import { AnalyzerToolType, CategoryType, FileNode } from '../types/fileManager';
 import {
   INTERNAL_SYSTEM_RESERVED_BYTES,
   INTERNAL_TOTAL_BYTES,
@@ -34,10 +33,6 @@ interface HomeDashboardProps {
   sdCardMounted: boolean;
   storageStats?: DeviceStorageStats | null;
   hasPermission?: boolean;
-  openWindows?: TabWindow[];
-  maxWindows?: number;
-  onSelectWindow?: (windowId: string) => void;
-  onCloseWindow?: (windowId: string) => void;
   onRequestPermission?: () => void;
   onOpenFolder: (folderId: string) => void;
   onOpenTool: (tool: AnalyzerToolType) => void;
@@ -200,10 +195,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
   sdCardMounted,
   storageStats,
   hasPermission = true,
-  openWindows = [],
-  maxWindows = 3,
-  onSelectWindow,
-  onCloseWindow,
   onRequestPermission,
   onOpenFolder,
   onOpenTool,
@@ -379,43 +370,6 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
 
   return (
     <div className="max-w-5xl mx-auto px-2.5 sm:px-6 py-4 sm:py-5 space-y-5 sm:space-y-6">
-      {/* Open Windows Strip (quick switch or close when windows are open) */}
-      {openWindows.length > 0 && onSelectWindow && onCloseWindow && (
-        <section aria-label="Open Windows" className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-3 py-2 flex items-center gap-2 overflow-x-auto">
-          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 shrink-0 whitespace-nowrap tabular-nums">
-            Windows ({openWindows.length}/{maxWindows})
-          </span>
-          <div className="flex items-center gap-1.5">
-            {openWindows.map((win, idx) => (
-              <div
-                key={win.id}
-                className="flex items-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 overflow-hidden shrink-0"
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelectWindow(win.id)}
-                  className="pl-2.5 pr-1.5 py-1 flex items-center gap-1.5 text-xs font-medium text-slate-800 dark:text-slate-100 hover:bg-slate-200/70 dark:hover:bg-slate-700/70"
-                >
-                  <span className="text-[11px] font-bold text-blue-600 dark:text-blue-400 tabular-nums">
-                    W{idx + 1}
-                  </span>
-                  <span className="max-w-[96px] truncate">{win.title}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onCloseWindow(win.id)}
-                  className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
-                  aria-label={`Close W${idx + 1}`}
-                  title={`Close W${idx + 1}`}
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
       {/* Permission Request Prompt if not yet granted */}
       {!hasPermission && (
         <section aria-label="Storage Permission Banner">
@@ -467,29 +421,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
         </div>
       </section>
 
-      {/* 2. Quick Analysis Tools (2x3 Grid) */}
-      <section aria-label="Quick Analysis Tools">
-        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
-          Quick Analysis Tools
-        </h3>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
-          {quickTools.map((tool) => (
-            <button
-              key={tool.id}
-              type="button"
-              onClick={() => onOpenTool(tool.id)}
-              className="min-h-[48px] px-3 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors flex items-center gap-2.5 text-left"
-            >
-              <span className="text-blue-600 dark:text-blue-400 shrink-0">{tool.icon}</span>
-              <span className="text-xs font-medium text-slate-800 dark:text-slate-100 leading-tight">
-                {tool.label}
-              </span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      {/* 3. Categories Section (3x3 Grid) */}
+      {/* 2. Categories Section (3x3 Grid) */}
       <section aria-label="Categories">
         <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
           Categories
@@ -518,6 +450,28 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
               </span>
             </button>
           ))}
+        </div>
+
+        {/* 3. Quick Analyzer Section (under Categories, starting on row below Recycle Bin, 3 per row) */}
+        <div className="mt-4 pt-4 border-t border-slate-200/70 dark:border-slate-800/80" aria-label="Quick Analyzer">
+          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
+            Quick Analyzer
+          </h3>
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            {quickTools.map((tool) => (
+              <button
+                key={tool.id}
+                type="button"
+                onClick={() => onOpenTool(tool.id)}
+                className="min-h-[64px] px-2 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors flex flex-col items-center justify-center gap-1.5 text-center"
+              >
+                <span className="text-blue-600 dark:text-blue-400 shrink-0">{tool.icon}</span>
+                <span className="text-[11px] sm:text-xs font-medium text-slate-800 dark:text-slate-100 leading-tight w-full truncate">
+                  {tool.label}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       </section>
     </div>
