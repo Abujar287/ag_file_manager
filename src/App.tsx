@@ -243,8 +243,6 @@ export default function App() {
   } | null>(null);
 
   // Swipe & edge-drag navigation state (DOM-driven to avoid 60fps full-tree re-renders)
-  const swipeIndicatorRef = useRef<HTMLDivElement>(null);
-  const swipeRightIndicatorRef = useRef<HTMLDivElement>(null);
   const leftWrapperRef = useRef<HTMLDivElement>(null);
   const leftPanelRef = useRef<HTMLDivElement>(null);
   const leftBackdropRef = useRef<HTMLDivElement>(null);
@@ -1880,31 +1878,7 @@ export default function App() {
         }
       : null;
 
-  const updateSwipeIndicator = useCallback((dx: number) => {
-    const el = swipeIndicatorRef.current;
-    if (!el) return;
-    if (dx > 12) {
-      el.style.display = 'flex';
-      el.style.transform = `translate3d(${Math.min(18, dx - 36)}px, -50%, 0)`;
-      el.style.opacity = String(Math.min(1, dx / 64));
-    } else {
-      el.style.display = 'none';
-      el.style.opacity = '0';
-    }
-  }, []);
 
-  const updateRightSwipeIndicator = useCallback((dx: number) => {
-    const el = swipeRightIndicatorRef.current;
-    if (!el) return;
-    if (dx < -12) {
-      el.style.display = 'flex';
-      el.style.transform = `translate3d(${Math.max(-18, dx + 36)}px, -50%, 0)`;
-      el.style.opacity = String(Math.min(1, Math.abs(dx) / 64));
-    } else {
-      el.style.display = 'none';
-      el.style.opacity = '0';
-    }
-  }, []);
 
   const resetLeftDrawerDragStyles = useCallback(() => {
     if (leftWrapperRef.current) {
@@ -2013,8 +1987,6 @@ export default function App() {
     const dy = e.touches[0].clientY - state.startY;
     if (Math.abs(dy) > 28 && Math.abs(dy) > Math.abs(dx) * 0.9) {
       edgeSwipeRef.current = null;
-      updateSwipeIndicator(0);
-      updateRightSwipeIndicator(0);
       resetLeftDrawerDragStyles();
       resetRightDrawerDragStyles();
       return;
@@ -2071,13 +2043,9 @@ export default function App() {
     if (dx > 8 && dx > Math.abs(dy) * 1.15 && canSwipeLeftToRight) {
       const clamped = Math.min(110, dx);
       state.lastDx = clamped;
-      updateSwipeIndicator(clamped);
-      updateRightSwipeIndicator(0);
     } else if (dx < -8 && Math.abs(dx) > Math.abs(dy) * 1.15 && nextWindowOnRight !== null) {
       const clamped = Math.max(-110, dx);
       state.lastDx = clamped;
-      updateRightSwipeIndicator(clamped);
-      updateSwipeIndicator(0);
     }
   }, [
     prevWindowOnLeft,
@@ -2085,8 +2053,6 @@ export default function App() {
     currentWindowIdx,
     searchOpen,
     utilityScreen,
-    updateSwipeIndicator,
-    updateRightSwipeIndicator,
     resetLeftDrawerDragStyles,
     resetRightDrawerDragStyles,
   ]);
@@ -2117,9 +2083,11 @@ export default function App() {
         setSearchQuery('');
       } else if (utilityScreen !== null) {
         setUtilityScreen(null);
-      } else if (prevWindowOnLeft) {
+      } else if (currentWindowIdx > 0 && prevWindowOnLeft) {
         syncScreenSideEffects(prevWindowOnLeft.window.screen);
         setActiveWindowId(prevWindowOnLeft.window.id);
+      } else if (currentWindowIdx === 0) {
+        setActiveWindowId(null);
       }
     } else if (state?.active && state.lastDx <= -64 && windows.length > 0) {
       setSearchOpen(false);
@@ -2130,8 +2098,6 @@ export default function App() {
         setActiveWindowId(nextWindowOnRight.window.id);
       }
     }
-    updateSwipeIndicator(0);
-    updateRightSwipeIndicator(0);
   }, [
     searchOpen,
     utilityScreen,
@@ -2139,8 +2105,6 @@ export default function App() {
     nextWindowOnRight,
     currentWindowIdx,
     syncScreenSideEffects,
-    updateSwipeIndicator,
-    updateRightSwipeIndicator,
     resetLeftDrawerDragStyles,
     resetRightDrawerDragStyles,
   ]);
@@ -2245,38 +2209,7 @@ export default function App() {
       onTouchEnd={handleRootTouchEnd}
       onTouchCancel={handleRootTouchEnd}
     >
-      {/* Left-to-Right Swipe Navigation Indicator (updated via DOM ref for zero lag) */}
-      <div
-        ref={swipeIndicatorRef}
-        style={{ display: 'none', opacity: 0 }}
-        className="fixed left-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none items-center gap-1.5 pl-2 pr-3 py-2.5 rounded-r-2xl bg-blue-600 text-white shadow-xl max-w-[190px]"
-      >
-        {prevWindowOnLeft ? (
-          <>
-            <ChevronLeft size={16} className="shrink-0" />
-            <span className="text-xs font-semibold truncate">
-              {prevWindowOnLeft.window.title}
-            </span>
-          </>
-        ) : (
-          <>
-            <Home size={18} className="shrink-0" />
-            <span className="text-xs font-semibold">Home</span>
-          </>
-        )}
-      </div>
 
-      {/* Right-to-Left Swipe Next-Window Indicator */}
-      <div
-        ref={swipeRightIndicatorRef}
-        style={{ display: 'none', opacity: 0 }}
-        className="fixed right-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none items-center gap-1.5 pl-3 pr-2 py-2.5 rounded-l-2xl bg-blue-600 text-white shadow-xl max-w-[190px]"
-      >
-        <span className="text-xs font-semibold truncate">
-          {nextWindowOnRight ? nextWindowOnRight.window.title : 'Next'}
-        </span>
-        <ChevronRight size={16} className="shrink-0" />
-      </div>
 
       {/* Hidden file picker for importing individual real files from device */}
       <input

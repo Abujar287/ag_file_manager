@@ -154,12 +154,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         }
       };
 
-      const tasks: Promise<void>[] = [];
+      const promises: Promise<void>[] = [];
 
-      // On Android WebView, native HttpURLConnection runs all endpoints concurrently without CORS overhead
       if (isRunningInAndroidApp()) {
-        tasks.push(
-          fetchNativeUpdateManifest(3500).then((nativeManifest) => {
+        promises.push(
+          fetchNativeUpdateManifest(2500).then((nativeManifest) => {
             if (!nativeManifest) return;
             considerCandidate({
               versionCode: nativeManifest.versionCode,
@@ -172,8 +171,8 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         );
       } else {
         for (const url of urls) {
-          tasks.push(
-            fetchJsonWithTimeout<Partial<RemoteVersionManifest>>(url, undefined, 2800).then(
+          promises.push(
+            fetchJsonWithTimeout<Partial<RemoteVersionManifest>>(url, undefined, 2000).then(
               (data) => {
                 if (data && typeof data.versionCode === 'number' && typeof data.versionName === 'string') {
                   considerCandidate({
@@ -189,14 +188,14 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           );
         }
 
-        tasks.push(
+        promises.push(
           fetchJsonWithTimeout<{
             tag_name?: string;
             assets?: Array<{ name?: string; browser_download_url?: string }>;
           }>(
             GITHUB_LATEST_RELEASE_API,
             { Accept: 'application/vnd.github+json' },
-            2800
+            2200
           ).then((rel) => {
             if (!rel) return;
             const relVersion = (rel.tag_name || '').replace(/^v/i, '').trim();
@@ -221,8 +220,33 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         );
       }
 
-      await Promise.allSettled(tasks);
-      return best;
+      await Promise.race([
+        Promise.allSettled(promises),
+        new Promise((resolve) => window.setTimeout(resolve, 2400)),
+      ]);
+
+      if (best) return best;
+
+      try {
+        const fallback = await fetchJsonWithTimeout<Partial<RemoteVersionManifest>>(
+          REMOTE_VERSION_JSON_URL + cacheBust,
+          undefined,
+          1500
+        );
+        if (fallback && typeof fallback.versionName === 'string') {
+          return {
+            versionCode: fallback.versionCode || effectiveCurrentCode + 1,
+            versionName: fallback.versionName,
+            apkUrl:
+              fallback.apkUrl ||
+              `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${fallback.versionName}/AG_File_Manager_v${fallback.versionName}.apk`,
+          };
+        }
+      } catch {
+        // ignore
+      }
+
+      return null;
     };
 
     const runCheck = async () => {

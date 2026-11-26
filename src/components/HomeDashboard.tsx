@@ -115,7 +115,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
       </svg>
 
       {/* Foreground Content */}
-      <div className="relative z-10 px-2.5 sm:px-4 py-4 sm:py-5 flex items-center gap-2 sm:gap-3.5 min-h-[116px] sm:min-h-[146px]">
+      <div className="relative z-10 px-2.5 py-2 sm:px-3.5 sm:py-2.5 flex items-center gap-2 sm:gap-3 min-h-[64px] sm:min-h-[72px]">
         {(() => {
           const freeBytes = Math.max(0, totalBytes - usedBytes);
           const freePercent = isMounted ? Math.max(0, 100 - Math.min(100, Math.max(0, percent))) : 0;
@@ -123,17 +123,17 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
 
           return (
             <>
-              {/* Left: Storage Ring Gauge for Free Space */}
-              <div className="relative w-10 h-10 sm:w-14 sm:h-14 shrink-0 flex items-center justify-center">
+              {/* Left: Compact Storage Ring Gauge */}
+              <div className="relative w-8 h-8 sm:w-10 sm:h-10 shrink-0 flex items-center justify-center">
                 <svg
-                  className="w-10 h-10 sm:w-14 sm:h-14 -rotate-90"
+                  className="w-8 h-8 sm:w-10 sm:h-10 -rotate-90"
                   viewBox="0 0 36 36"
                   aria-hidden="true"
                 >
                   {/* Inner Dark Background */}
                   <circle cx="18" cy="18" r="16" fill="#242934" />
                   {/* Dark Track Circle */}
-                  <circle cx="18" cy="18" r={radius} fill="none" stroke="#373E4D" strokeWidth="3.5" />
+                  <circle cx="18" cy="18" r={radius} fill="none" stroke="#373E4D" strokeWidth="3.2" />
                   {/* Active Bright Free Space Arc */}
                   {isMounted && (
                     <circle
@@ -142,45 +142,42 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
                       r={radius}
                       fill="none"
                       stroke="#FFFFFF"
-                      strokeWidth="3.5"
+                      strokeWidth="3.2"
                       strokeLinecap="round"
                       strokeDasharray={circumference}
                       strokeDashoffset={displayOffset}
                     />
                   )}
                 </svg>
-                <span className="absolute text-[10px] sm:text-xs font-bold text-white tabular-nums tracking-tight">
+                <span className="absolute text-[9px] sm:text-[10px] font-bold text-white tabular-nums tracking-tight">
                   {isMounted ? `${freePercent}%` : '0%'}
                 </span>
               </div>
 
               {/* Right Content */}
-              <div className="flex-1 min-w-0 flex flex-col justify-between py-1 sm:py-1.5 h-full">
+              <div className="flex-1 min-w-0 flex flex-col justify-center gap-0.5 sm:gap-1">
                 {/* Top Row: Title + Arrow */}
                 <div className="flex items-center justify-between gap-1">
-                  <h2 className="text-[11px] sm:text-sm font-bold text-white tracking-tight leading-tight">
+                  <h2 className="text-[11px] sm:text-xs font-bold text-white tracking-tight leading-none truncate">
                     {title}
                   </h2>
                   {isMounted && (
                     <ArrowRight
-                      size={13}
+                      size={12}
                       className="text-[#8894A6] group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0"
                     />
                   )}
                 </div>
 
-                {/* Spacer / Divider clearance */}
-                <div className="h-3 sm:h-4" />
-
                 {/* Bottom Row: Free Space / Total Storage + % free */}
-                <div className="text-[10px] sm:text-xs tabular-nums leading-tight font-medium">
+                <div className="text-[10px] sm:text-[11px] tabular-nums leading-none font-medium">
                   {isMounted ? (
                     <div className="flex flex-wrap items-baseline gap-x-1">
                       <span className="text-[#FF822E] font-bold whitespace-nowrap">
                         {formatBytes(freeBytes, 1)} free
                       </span>
                       <span className="text-[#8E99A9] whitespace-nowrap">
-                        / {formatBytes(totalBytes, 0)} ({freePercent}% free)
+                        / {formatBytes(totalBytes, 0)} ({freePercent}%)
                       </span>
                     </div>
                   ) : (

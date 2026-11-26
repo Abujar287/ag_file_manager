@@ -501,6 +501,74 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
   const [videoPlaybackRate, setVideoPlaybackRate] = useState(1);
   const [videoFullscreen, setVideoFullscreen] = useState(false);
 
+  const [brightness, setBrightness] = useState<number>(100);
+  const [videoVolume, setVideoVolume] = useState<number>(1);
+  const [videoGestureNotice, setVideoGestureNotice] = useState<string | null>(null);
+  const videoTouchStateRef = useRef<{
+    startX: number;
+    startY: number;
+    mode: 'none' | 'horizontal' | 'vertical_left' | 'vertical_right';
+    baseBrightness: number;
+    baseVolume: number;
+  }>({ startX: 0, startY: 0, mode: 'none', baseBrightness: 100, baseVolume: 1 });
+
+  const handleVideoTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    videoTouchStateRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      mode: 'none',
+      baseBrightness: brightness,
+      baseVolume: videoRef.current ? videoRef.current.volume : videoVolume,
+    };
+  };
+
+  const handleVideoTouchMove = (e: React.TouchEvent) => {
+    const state = videoTouchStateRef.current;
+    if (e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - state.startX;
+    const dy = touch.clientY - state.startY;
+
+    if (state.mode === 'none') {
+      if (Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.1) {
+        state.mode = 'horizontal';
+      } else if (Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx)) {
+        const isLeft = state.startX < window.innerWidth / 2;
+        state.mode = isLeft ? 'vertical_left' : 'vertical_right';
+      }
+    }
+
+    if (state.mode === 'vertical_left') {
+      const delta = -dy;
+      const nextB = Math.min(200, Math.max(20, state.baseBrightness + Math.round(delta * 0.4)));
+      setBrightness(nextB);
+      setVideoGestureNotice(`Brightness: ${nextB}%`);
+    } else if (state.mode === 'vertical_right') {
+      const delta = -dy;
+      const nextV = Math.min(1, Math.max(0, state.baseVolume + delta * 0.005));
+      setVideoVolume(nextV);
+      if (videoRef.current) videoRef.current.volume = nextV;
+      setVideoGestureNotice(`Volume: ${Math.round(nextV * 100)}%`);
+    }
+  };
+
+  const handleVideoTouchEnd = (e: React.TouchEvent) => {
+    const state = videoTouchStateRef.current;
+    if (state.mode === 'horizontal') {
+      const touch = e.changedTouches[0];
+      const dx = touch ? touch.clientX - state.startX : 0;
+      if (dx <= -45) {
+        goNextMedia();
+      } else if (dx >= 45) {
+        goPrevMedia();
+      }
+    }
+    state.mode = 'none';
+    setTimeout(() => setVideoGestureNotice(null), 1400);
+  };
+
   // Built-in PDF reader state
   const [pdfPageCount, setPdfPageCount] = useState(0);
   const [pdfPageIndex, setPdfPageIndex] = useState(0);
@@ -862,10 +930,7 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
     }
   };
 
-  // Dedicated Video Player with Non-Overlapping Seek Controls & Bottom Next-Video Thumbnails
   if (isVideo && mediaSrc) {
-    const hasPrev = currentMediaIndex > 0;
-    const hasNext = currentMediaIndex >= 0 && currentMediaIndex < activeNavList.length - 1;
     const displayTime = videoSeeking && videoSeekPreview !== null ? videoSeekPreview : videoCurrentTime;
     const effectiveDuration = videoDuration > 0 ? videoDuration : 0;
     const progressPct =
@@ -874,10 +939,10 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
     return (
       <div
         ref={videoStageContainerRef}
-        className="fixed inset-0 z-50 bg-black text-white flex flex-col select-none"
+        className="fixed inset-0 z-50 bg-black text-white flex flex-col select-none overflow-hidden"
       >
         {/* Top Compact Video Header */}
-        <div className="shrink-0 bg-zinc-950/95 border-b border-white/10 px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2.5">
+        <div className="shrink-0 bg-zinc-950/95 border-b border-white/10 px-3 sm:px-5 py-2.5 flex items-center justify-between gap-2.5 z-20">
           <div className="flex items-center gap-2.5 min-w-0 flex-1">
             <button
               type="button"
@@ -913,10 +978,13 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
           )}
         </div>
 
-        {/* Upper Video Stage — sized to leave generous room below for Seek Controls & Next Video Thumbnails */}
+        {/* Video Stage with Swipe & Gesture Handlers */}
         <div
-          className="relative flex-1 min-h-[180px] flex items-center justify-center bg-black px-2 py-2 overflow-hidden"
+          className="relative flex-1 flex items-center justify-center bg-black px-2 py-2 overflow-hidden touch-none"
           onClick={toggleVideoPlayPause}
+          onTouchStart={handleVideoTouchStart}
+          onTouchMove={handleVideoTouchMove}
+          onTouchEnd={handleVideoTouchEnd}
         >
           <video
             ref={videoRef}
@@ -926,9 +994,9 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
             autoPlay
             playsInline
             muted={videoMuted}
+            style={{ filter: `brightness(${brightness}%)` }}
             onLoadedMetadata={(e) => {
               const v = e.currentTarget;
-              v.playbackRate = videoPlaybackRate;
               if (Number.isFinite(v.duration)) setVideoDuration(v.duration);
             }}
             onDurationChange={(e) => {
@@ -946,7 +1014,14 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
             className="max-w-full max-h-full w-auto h-auto rounded-lg outline-none shadow-2xl object-contain"
           />
 
-          {/* Center Tap-to-Play Overlay when Paused */}
+          {/* Gesture Notice Popup (Brightness / Volume) */}
+          {videoGestureNotice && (
+            <div className="absolute inset-0 m-auto w-44 h-16 bg-black/80 border border-white/20 rounded-2xl flex items-center justify-center text-sm font-bold text-white shadow-2xl z-30 pointer-events-none">
+              {videoGestureNotice}
+            </div>
+          )}
+
+          {/* Center Play Overlay when Paused */}
           {!videoPlaying && (
             <button
               type="button"
@@ -955,257 +1030,77 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
                 toggleVideoPlayPause();
               }}
               aria-label="Play video"
-              className="absolute inset-0 m-auto w-14 h-14 rounded-full bg-black/70 hover:bg-blue-600 border border-white/25 text-white flex items-center justify-center shadow-2xl transition-colors"
+              className="absolute inset-0 m-auto w-14 h-14 rounded-full bg-black/70 hover:bg-blue-600 border border-white/25 text-white flex items-center justify-center shadow-2xl transition-colors z-20"
             >
               <Play size={26} fill="currentColor" className="ml-0.5" />
             </button>
           )}
-
-          {/* Previous / Next Video Arrows */}
-          {hasPrev && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                goPrevMedia();
-              }}
-              className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-black/60 hover:bg-black/85 border border-white/15 text-white flex items-center justify-center shadow-lg"
-              aria-label="Previous video"
-            >
-              <ChevronLeft size={20} />
-            </button>
-          )}
-          {hasNext && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                goNextMedia();
-              }}
-              className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-black/60 hover:bg-black/85 border border-white/15 text-white flex items-center justify-center shadow-lg"
-              aria-label="Next video"
-            >
-              <ChevronRight size={20} />
-            </button>
-          )}
         </div>
 
-        {/* Dedicated Seek Bar, Playback Controls, Next Video Thumbnails & Actions (never overlapping video) */}
+        {/* Minimal Bottom Controls: Timeline & Play/Pause */}
         <div
-          className="shrink-0 bg-zinc-950 border-t border-white/10 px-3 sm:px-5 pt-2.5 pb-2.5 space-y-2.5"
+          className="shrink-0 bg-zinc-950 border-t border-white/10 px-4 sm:px-6 py-3 space-y-2 z-20"
           onClick={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-          onTouchMove={(e) => e.stopPropagation()}
-          onTouchEnd={(e) => e.stopPropagation()}
         >
-          {/* Interactive Timeline / Seek Slider */}
-          <div className="space-y-1">
-            <div className="flex items-center gap-2.5">
-              <span className="text-[11px] font-mono tabular-nums text-white/85 min-w-[40px]">
-                {formatVideoTime(displayTime)}
-              </span>
-              <div className="relative flex-1 flex items-center h-6">
-                <div className="w-full h-1.5 rounded-full bg-white/20 overflow-hidden pointer-events-none">
-                  <div
-                    className="h-full bg-blue-500 rounded-full"
-                    style={{ width: `${progressPct}%` }}
-                  />
-                </div>
-                <input
-                  type="range"
-                  min={0}
-                  max={effectiveDuration > 0 ? effectiveDuration : 100}
-                  step={0.1}
-                  value={effectiveDuration > 0 ? Math.min(displayTime, effectiveDuration) : 0}
-                  disabled={effectiveDuration <= 0}
-                  onPointerDown={() => setVideoSeeking(true)}
-                  onTouchStart={(e) => {
-                    e.stopPropagation();
-                    setVideoSeeking(true);
-                  }}
-                  onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    setVideoSeeking(true);
-                    setVideoSeekPreview(val);
-                    if (videoRef.current && effectiveDuration > 0) {
-                      videoRef.current.currentTime = val;
-                    }
-                  }}
-                  onPointerUp={(e) => {
-                    const val = parseFloat((e.target as HTMLInputElement).value);
-                    if (effectiveDuration > 0) seekVideoTo(val);
-                    setVideoSeeking(false);
-                    setVideoSeekPreview(null);
-                  }}
-                  onPointerCancel={() => {
-                    setVideoSeeking(false);
-                    setVideoSeekPreview(null);
-                  }}
-                  onTouchEnd={(e) => {
-                    const val = parseFloat((e.target as HTMLInputElement).value);
-                    if (effectiveDuration > 0) seekVideoTo(val);
-                    setVideoSeeking(false);
-                    setVideoSeekPreview(null);
-                  }}
-                  onTouchCancel={() => {
-                    setVideoSeeking(false);
-                    setVideoSeekPreview(null);
-                  }}
-                  aria-label="Seek video timeline"
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] font-mono tabular-nums text-white/85 min-w-[40px]">
+              {formatVideoTime(displayTime)}
+            </span>
+            <div className="relative flex-1 flex items-center h-6">
+              <div className="w-full h-1.5 rounded-full bg-white/20 overflow-hidden pointer-events-none">
                 <div
-                  className="w-3.5 h-3.5 rounded-full bg-white border-2 border-blue-500 shadow-md pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
-                  style={{ left: `${progressPct}%` }}
+                  className="h-full bg-blue-500 rounded-full"
+                  style={{ width: `${progressPct}%` }}
                 />
               </div>
-              <span className="text-[11px] font-mono tabular-nums text-white/70 min-w-[40px] text-right">
-                {formatVideoTime(effectiveDuration)}
-              </span>
+              <input
+                type="range"
+                min={0}
+                max={effectiveDuration > 0 ? effectiveDuration : 100}
+                step={0.1}
+                value={effectiveDuration > 0 ? Math.min(displayTime, effectiveDuration) : 0}
+                disabled={effectiveDuration <= 0}
+                onPointerDown={() => setVideoSeeking(true)}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  setVideoSeeking(true);
+                  setVideoSeekPreview(val);
+                  if (videoRef.current && effectiveDuration > 0) {
+                    videoRef.current.currentTime = val;
+                  }
+                }}
+                onPointerUp={(e) => {
+                  const val = parseFloat((e.target as HTMLInputElement).value);
+                  if (effectiveDuration > 0) seekVideoTo(val);
+                  setVideoSeeking(false);
+                  setVideoSeekPreview(null);
+                }}
+                onPointerCancel={() => {
+                  setVideoSeeking(false);
+                  setVideoSeekPreview(null);
+                }}
+                aria-label="Seek video timeline"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              />
+              <div
+                className="w-3.5 h-3.5 rounded-full bg-white border-2 border-blue-500 shadow-md pointer-events-none absolute top-1/2 -translate-y-1/2 -translate-x-1/2"
+                style={{ left: `${progressPct}%` }}
+              />
             </div>
-
-            {/* Playback Buttons */}
-            <div className="flex items-center justify-between gap-2 pt-0.5">
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={toggleVideoMute}
-                  className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white/90 flex items-center justify-center"
-                  aria-label={videoMuted ? 'Unmute' : 'Mute'}
-                  title={videoMuted ? 'Unmute' : 'Mute'}
-                >
-                  {videoMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-                </button>
-                <button
-                  type="button"
-                  onClick={cycleVideoPlaybackRate}
-                  className="h-8 px-2 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-bold tabular-nums text-white/90"
-                  aria-label="Playback speed"
-                  title="Playback speed"
-                >
-                  {videoPlaybackRate}x
-                </button>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => skipVideoBy(-10)}
-                  className="h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center gap-1 text-xs font-semibold"
-                  aria-label="Rewind 10 seconds"
-                >
-                  <RotateCcw size={14} />
-                  <span>10s</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={toggleVideoPlayPause}
-                  className="w-10 h-9 rounded-xl bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center shadow-sm"
-                  aria-label={videoPlaying ? 'Pause' : 'Play'}
-                >
-                  {videoPlaying ? <Pause size={18} /> : <Play size={18} fill="currentColor" className="ml-0.5" />}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => skipVideoBy(10)}
-                  className="h-8 px-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-white flex items-center gap-1 text-xs font-semibold"
-                  aria-label="Forward 10 seconds"
-                >
-                  <span>10s</span>
-                  <RotateCw size={14} />
-                </button>
-              </div>
-
-              <button
-                type="button"
-                onClick={toggleVideoFullscreen}
-                className="w-8 h-8 rounded-lg bg-white/10 hover:bg-white/20 text-white/90 flex items-center justify-center"
-                aria-label={videoFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                title={videoFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-              >
-                {videoFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </button>
-            </div>
+            <span className="text-[11px] font-mono tabular-nums text-white/70 min-w-[40px] text-right">
+              {formatVideoTime(effectiveDuration)}
+            </span>
           </div>
 
-          {/* Next / Sibling Video Thumbnails Strip */}
-          {visibleFilmstrip.length > 1 && onSelectFile && (
-            <div className="space-y-1.5 pt-1 border-t border-white/10">
-              <div className="flex items-center justify-between text-[11px] text-white/65 px-0.5">
-                <span className="font-semibold text-white/85">Next Videos</span>
-                <span className="tabular-nums">
-                  {currentMediaIndex + 1} / {activeNavList.length}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                {visibleFilmstrip.map((item) => {
-                  const isActive = item.id === file.id;
-                  return (
-                    <button
-                      key={item.id}
-                      ref={isActive ? activeVideoThumbRef : undefined}
-                      type="button"
-                      onClick={() => onSelectFile(item)}
-                      className={`w-24 h-14 rounded-lg overflow-hidden shrink-0 relative border-2 transition-all bg-zinc-900 ${
-                        isActive
-                          ? 'border-blue-500 ring-2 ring-blue-500/35 opacity-100'
-                          : 'border-white/15 opacity-75 hover:opacity-100'
-                      }`}
-                      title={item.name}
-                    >
-                      <FileIcon node={item} showThumbnails={true} size="fill" />
-                      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-1 py-0.5 text-left">
-                        <div className="text-[9px] font-medium text-white truncate">
-                          {item.name}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Action Bar */}
-          <div className="flex items-center justify-around max-w-md mx-auto text-[11px] font-medium pt-0.5 border-t border-white/10">
-            {onShareFile && (
-              <button
-                type="button"
-                onClick={() => onShareFile(file)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/90 hover:bg-white/10"
-              >
-                <Share2 size={15} />
-                <span>Share</span>
-              </button>
-            )}
+          <div className="flex items-center justify-center pt-1">
             <button
               type="button"
-              onClick={() => onDownloadFile(file)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/90 hover:bg-white/10"
+              onClick={toggleVideoPlayPause}
+              className="w-12 h-10 rounded-xl bg-blue-600 hover:bg-blue-500 text-white flex items-center justify-center shadow-sm"
+              aria-label={videoPlaying ? 'Pause' : 'Play'}
             >
-              <Download size={15} />
-              <span>Export</span>
+              {videoPlaying ? <Pause size={20} /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
             </button>
-            {onOpenExternal && (
-              <button
-                type="button"
-                onClick={() => onOpenExternal(file)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/90 hover:bg-white/10"
-              >
-                <ExternalLink size={15} />
-                <span>Open</span>
-              </button>
-            )}
-            {onDeleteFile && (
-              <button
-                type="button"
-                onClick={() => onDeleteFile(file)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-rose-400 hover:bg-rose-500/20"
-              >
-                <Trash2 size={15} />
-                <span>Delete</span>
-              </button>
-            )}
           </div>
         </div>
       </div>
