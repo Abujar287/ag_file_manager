@@ -65,6 +65,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
   const freePercent = isMounted ? Math.max(0, 100 - usedPercent) : 0;
   const displayOffset = circumference - (freePercent / 100) * circumference;
   const gradId = `microsd_grad_${id}`;
+  const freeBytes = Math.max(0, totalBytes - usedBytes);
 
   return (
     <button
@@ -143,7 +144,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
             {isMounted ? (
               <div className="flex items-center gap-1 whitespace-nowrap text-nowrap flex-nowrap">
                 <span className="text-white font-bold">
-                  {formatBytes(usedBytes, 2)}
+                  {formatBytes(freeBytes, 2)}
                 </span>
                 <span className="text-[#8E99A9]">
                   / {formatBytes(totalBytes, 2)}
@@ -382,7 +383,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
   ];
 
   return (
-    <div className="max-w-5xl mx-auto px-2.5 sm:px-6 py-4 sm:py-5 space-y-5 sm:space-y-6">
+    <div className="max-w-5xl mx-auto px-2.5 sm:px-6 py-3 sm:py-4 space-y-3 sm:space-y-4">
       {/* Permission Request Prompt if not yet granted */}
       {!hasPermission && (
         <section aria-label="Storage Permission Banner">
@@ -437,8 +438,8 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
         </div>
       </section>
 
-      {/* 2. Categories Section (4 Columns Grid with extra breathing room/whitespace) */}
-      <section aria-label="Categories" className="pt-8 sm:pt-10">
+      {/* 2. Categories Section (4 Columns Grid with balanced spacing) */}
+      <section aria-label="Categories" className="pt-3 sm:pt-4">
         <div className="flex items-center justify-between mb-3.5 px-0.5">
           <h3 className="text-sm font-bold text-slate-200 tracking-tight">
             Categories
