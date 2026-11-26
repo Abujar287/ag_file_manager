@@ -1926,22 +1926,6 @@ export default function App() {
       ? windows.findIndex((w) => w.id === activeWindow.id)
       : -1;
 
-  const nextWindowOnRight =
-    !utilityScreen && !searchOpen && windows.length > 0
-      ? {
-          index: (currentWindowIdx === -1 ? 0 : currentWindowIdx + 1) % windows.length,
-          window: windows[(currentWindowIdx === -1 ? 0 : currentWindowIdx + 1) % windows.length],
-        }
-      : null;
-
-  const prevWindowOnLeft =
-    !utilityScreen && !searchOpen && windows.length > 0
-      ? {
-          index: (currentWindowIdx === -1 ? windows.length - 1 : currentWindowIdx - 1 + windows.length) % windows.length,
-          window: windows[(currentWindowIdx === -1 ? windows.length - 1 : currentWindowIdx - 1 + windows.length) % windows.length],
-        }
-      : null;
-
 
 
   const resetLeftDrawerDragStyles = useCallback(() => {
@@ -2098,76 +2082,101 @@ export default function App() {
       return;
     }
 
-    const canSwipeLeftToRight =
-      prevWindowOnLeft !== null ||
-      currentWindowIdx === 0 ||
-      searchOpen ||
-      utilityScreen !== null;
-
-    if (dx > 8 && dx > Math.abs(dy) * 1.15 && canSwipeLeftToRight) {
-      const clamped = Math.min(110, dx);
-      state.lastDx = clamped;
-    } else if (dx < -8 && Math.abs(dx) > Math.abs(dy) * 1.15 && nextWindowOnRight !== null) {
-      const clamped = Math.max(-110, dx);
-      state.lastDx = clamped;
+    if (state.mode === 'window_swipe') {
+      if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy) * 1.05) {
+        state.lastDx = Math.max(-120, Math.min(120, dx));
+      }
     }
   }, [
-    prevWindowOnLeft,
-    nextWindowOnRight,
-    currentWindowIdx,
-    searchOpen,
-    utilityScreen,
     resetLeftDrawerDragStyles,
     resetRightDrawerDragStyles,
   ]);
 
-  const handleRootTouchEnd = useCallback(() => {
+  const handleRootTouchEnd = useCallback((e?: React.TouchEvent) => {
     const state = edgeSwipeRef.current;
     edgeSwipeRef.current = null;
+    if (!state || !state.active) return;
 
-    if (state?.active && state.mode === 'left_drawer') {
+    let finalDx = state.lastDx;
+    if (e?.changedTouches && e.changedTouches.length > 0) {
+      const touch = e.changedTouches[0];
+      const realDx = touch.clientX - state.startX;
+      const realDy = touch.clientY - state.startY;
+      if (Math.abs(realDx) > Math.abs(realDy)) {
+        finalDx = realDx;
+      }
+    }
+
+    if (state.mode === 'left_drawer') {
       resetLeftDrawerDragStyles();
-      if (state.lastDx >= 48) {
+      if (finalDx >= 42) {
         setDrawerOpen(true);
       }
       return;
     }
 
-    if (state?.active && state.mode === 'right_drawer') {
+    if (state.mode === 'right_drawer') {
       resetRightDrawerDragStyles();
-      if (state.lastDx <= -48) {
+      if (finalDx <= -42) {
         setRightMenuOpen(true);
       }
       return;
     }
 
-    if (state?.active && state.lastDx >= 64 && windows.length > 0) {
-      if (searchOpen) {
+    if (state.mode === 'window_swipe') {
+      const SWIPE_THRESHOLD = 38;
+
+      if (finalDx >= SWIPE_THRESHOLD && (windows.length > 0 || searchOpen || utilityScreen !== null)) {
+        // Swiping Left-to-Right (Previous window / loop to last window)
+        if (searchOpen) {
+          setSearchOpen(false);
+          setSearchQuery('');
+        } else if (utilityScreen !== null) {
+          setUtilityScreen(null);
+        } else if (windows.length > 0) {
+          const totalSlots = 1 + windows.length;
+          const currSlot = activeWindow
+            ? Math.max(0, windows.findIndex((w) => w.id === activeWindow.id) + 1)
+            : 0;
+          const prevSlot = (currSlot - 1 + totalSlots) % totalSlots;
+          if (prevSlot === 0) {
+            setActiveWindowId(null);
+          } else {
+            const targetWin = windows[prevSlot - 1];
+            if (targetWin) {
+              syncScreenSideEffects(targetWin.screen);
+              setActiveWindowId(targetWin.id);
+            }
+          }
+        }
+      } else if (finalDx <= -SWIPE_THRESHOLD && windows.length > 0) {
+        // Swiping Right-to-Left (Next window / loop from last window back to Home!)
         setSearchOpen(false);
         setSearchQuery('');
-      } else if (utilityScreen !== null) {
         setUtilityScreen(null);
-      } else if (currentWindowIdx > 0 && prevWindowOnLeft) {
-        syncScreenSideEffects(prevWindowOnLeft.window.screen);
-        setActiveWindowId(prevWindowOnLeft.window.id);
-      } else if (currentWindowIdx === 0) {
-        setActiveWindowId(null);
-      }
-    } else if (state?.active && state.lastDx <= -64 && windows.length > 0) {
-      setSearchOpen(false);
-      setSearchQuery('');
-      setUtilityScreen(null);
-      if (nextWindowOnRight) {
-        syncScreenSideEffects(nextWindowOnRight.window.screen);
-        setActiveWindowId(nextWindowOnRight.window.id);
+
+        const totalSlots = 1 + windows.length;
+        const currSlot = activeWindow
+          ? Math.max(0, windows.findIndex((w) => w.id === activeWindow.id) + 1)
+          : 0;
+        const nextSlot = (currSlot + 1) % totalSlots;
+        if (nextSlot === 0) {
+          // Loop back to 1st window (Home)!
+          setActiveWindowId(null);
+        } else {
+          const targetWin = windows[nextSlot - 1];
+          if (targetWin) {
+            syncScreenSideEffects(targetWin.screen);
+            setActiveWindowId(targetWin.id);
+          }
+        }
       }
     }
   }, [
+    windows,
+    activeWindow,
     searchOpen,
     utilityScreen,
-    prevWindowOnLeft,
-    nextWindowOnRight,
-    currentWindowIdx,
     syncScreenSideEffects,
     resetLeftDrawerDragStyles,
     resetRightDrawerDragStyles,
@@ -2468,6 +2477,7 @@ export default function App() {
             <AboutView
               settings={settings}
               onBackHome={handleBackStepMemo}
+              onCheckUpdate={() => setUpdateModalOpen(true)}
             />
           )}
         </main>
