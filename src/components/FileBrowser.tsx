@@ -1,6 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft,
   Check,
   ClipboardPaste,
   Copy,
@@ -58,7 +57,7 @@ interface FileBrowserProps {
   sortBy: SortBy;
   sortOrder: SortOrder;
   clipboard: ClipboardState | null;
-  onBackHome: () => void;
+  onBackHome?: () => void;
   onOpenFolder: (folderId: string) => void;
   onOpenFile: (file: FileNode, contextList?: FileNode[]) => void;
   onCopy: (ids: string[]) => void;
@@ -400,7 +399,6 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
   sortBy,
   sortOrder,
   clipboard,
-  onBackHome,
   onOpenFolder,
   onOpenFile,
   onCopy,
@@ -673,102 +671,74 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
 
   return (
     <div className="max-w-5xl mx-auto pb-24">
-      {/* Path Bar */}
-      <div className="px-4 sm:px-6 py-2.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
-        {mode === 'folder' && folderId ? (
-          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-            <button
-              type="button"
-              onClick={onBackHome}
-              className="min-w-[34px] min-h-[34px] flex items-center justify-center rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
-              aria-label="Back"
-            >
-              <ArrowLeft size={17} />
-            </button>
-            <nav
-              className="flex items-center gap-1 overflow-x-auto text-sm text-slate-600 dark:text-slate-300 min-w-0"
-              aria-label="Current path"
-            >
-              {folderAncestors.map((seg, idx) => (
-                <React.Fragment key={seg.id}>
-                  {idx > 0 && (
-                    <span className="text-slate-400 dark:text-slate-500 select-none shrink-0">
-                      /
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onOpenFolder(seg.id)}
-                    className={`px-1.5 py-1 rounded-lg whitespace-nowrap transition-colors ${
-                      idx === folderAncestors.length - 1
-                        ? 'font-semibold text-slate-900 dark:text-slate-100'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
-                    }`}
-                  >
-                    {seg.label}
-                  </button>
-                </React.Fragment>
-              ))}
-            </nav>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 min-w-0">
-            <button
-              type="button"
-              onClick={onBackHome}
-              className="min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
-              aria-label="Back"
-            >
-              <ArrowLeft size={18} />
-            </button>
-            <h2 className="text-sm sm:text-base font-semibold text-slate-900 dark:text-slate-100 truncate">
-              {mode === 'search'
-                ? searchQuery
-                  ? `Search: "${searchQuery}"`
-                  : 'Search All Files'
-                : category
-                  ? CATEGORY_TITLES[category]
-                  : 'Files'}
-            </h2>
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 shrink-0">
-          {isMediaCategory && !isSelecting && (
-            <button
-              type="button"
-              onClick={() =>
-                setGalleryViewOverride(effectiveViewMode === 'grid' ? 'list' : 'grid')
-              }
-              className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
-              aria-label={effectiveViewMode === 'grid' ? 'Switch to list view' : 'Switch to gallery view'}
-              title={effectiveViewMode === 'grid' ? 'List View' : 'Gallery View'}
-            >
-              {effectiveViewMode === 'grid' ? <ListIcon size={16} /> : <LayoutGrid size={16} />}
-            </button>
-          )}
-          {isRecycleBin && sortedItems.length > 0 && !isSelecting ? (
-            <button
-              type="button"
-              onClick={onEmptyRecycleBin}
-              className="px-3 py-1 rounded-lg text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/70"
-            >
-              Empty Bin
-            </button>
-          ) : (
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-200 tabular-nums">
-              <svg width="16" height="16" viewBox="0 0 20 20" aria-hidden="true">
-                <circle cx="10" cy="10" r="8.5" fill="currentColor" fillOpacity="0.18" />
-                <path
-                  d="M10 10 L10 1.5 A8.5 8.5 0 0 1 18.5 10 Z"
-                  fill="#F59E0B"
-                />
-              </svg>
-              <span>{freePercent}% free</span>
-            </div>
-          )}
+      {/* Compact Path / Category Context Strip */}
+      {mode === 'folder' && folderId ? (
+        <div className="px-3 sm:px-6 py-1.5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2">
+          <nav
+            className="flex items-center gap-0.5 overflow-x-auto text-xs sm:text-sm text-slate-600 dark:text-slate-300 min-w-0 flex-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            aria-label="Current path"
+          >
+            {folderAncestors.map((seg, idx) => (
+              <React.Fragment key={seg.id}>
+                {idx > 0 && (
+                  <span className="text-slate-400 dark:text-slate-500 select-none shrink-0 px-0.5">
+                    /
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onOpenFolder(seg.id)}
+                  className={`px-1.5 py-1 rounded-lg whitespace-nowrap transition-colors ${
+                    idx === folderAncestors.length - 1
+                      ? 'font-semibold text-slate-900 dark:text-slate-100'
+                      : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {seg.label}
+                </button>
+              </React.Fragment>
+            ))}
+          </nav>
+          <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 tabular-nums shrink-0 whitespace-nowrap">
+            {freePercent}% free
+          </span>
         </div>
-      </div>
+      ) : (
+        <div className="px-4 sm:px-6 pt-2.5 pb-0.5 flex items-center justify-between gap-2">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400 truncate tabular-nums">
+            {mode === 'search'
+              ? searchQuery
+                ? `"${searchQuery}" · ${sortedItems.length} result${sortedItems.length === 1 ? '' : 's'}`
+                : `All Files · ${sortedItems.length}`
+              : `${category ? CATEGORY_TITLES[category] : 'Files'} · ${sortedItems.length}`}
+          </span>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {isMediaCategory && !isSelecting && (
+              <button
+                type="button"
+                onClick={() =>
+                  setGalleryViewOverride(effectiveViewMode === 'grid' ? 'list' : 'grid')
+                }
+                className="p-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+                aria-label={effectiveViewMode === 'grid' ? 'Switch to list view' : 'Switch to gallery view'}
+                title={effectiveViewMode === 'grid' ? 'List View' : 'Gallery View'}
+              >
+                {effectiveViewMode === 'grid' ? <ListIcon size={15} /> : <LayoutGrid size={15} />}
+              </button>
+            )}
+            {isRecycleBin && sortedItems.length > 0 && !isSelecting && (
+              <button
+                type="button"
+                onClick={onEmptyRecycleBin}
+                className="px-2.5 py-1 rounded-lg text-xs font-semibold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/70"
+              >
+                Empty Bin
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Multi-Select Header Banner */}
       {isSelecting && (

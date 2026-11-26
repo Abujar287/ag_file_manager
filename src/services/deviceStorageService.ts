@@ -495,7 +495,7 @@ export interface NativeUpdateManifest {
   apkUrl: string;
 }
 
-export function fetchNativeUpdateManifest(timeoutMs = 10000): Promise<NativeUpdateManifest | null> {
+export function fetchNativeUpdateManifest(timeoutMs = 3500): Promise<NativeUpdateManifest | null> {
   const bridge = getNativeBridge();
   if (!bridge || typeof bridge.fetchLatestUpdateManifestAsync !== 'function' || typeof window === 'undefined') {
     return Promise.resolve(null);

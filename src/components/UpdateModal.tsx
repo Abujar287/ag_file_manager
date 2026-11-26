@@ -92,6 +92,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
 
     let mounted = true;
     const isFileProtocol = typeof window !== 'undefined' && window.location.protocol === 'file:';
+    const checkController = new AbortController();
 
     const compareVersionNames = (a: string, b: string): number => {
       const pa = a.replace(/^v/i, '').split('.').map((n) => parseInt(n, 10) || 0);
@@ -102,6 +103,31 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
         if (diff !== 0) return diff;
       }
       return 0;
+    };
+
+    const fetchJsonWithTimeout = async <T,>(
+      url: string,
+      headers?: Record<string, string>,
+      timeoutMs = 3000
+    ): Promise<T | null> => {
+      const reqController = new AbortController();
+      const onParentAbort = () => reqController.abort();
+      checkController.signal.addEventListener('abort', onParentAbort);
+      const timeoutId = window.setTimeout(() => reqController.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, {
+          cache: 'no-store',
+          headers,
+          signal: reqController.signal,
+        });
+        if (!res.ok) return null;
+        return (await res.json()) as T;
+      } catch {
+        return null;
+      } finally {
+        window.clearTimeout(timeoutId);
+        checkController.signal.removeEventListener('abort', onParentAbort);
+      }
     };
 
     const fetchManifest = async (): Promise<RemoteVersionManifest | null> => {
@@ -117,82 +143,85 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           : ['./version.json' + cacheBust, REMOTE_VERSION_JSON_URL + cacheBust];
 
       let best: RemoteVersionManifest | null = null;
-      const pickBest = (
-        current: RemoteVersionManifest | null,
-        candidate: RemoteVersionManifest
-      ): RemoteVersionManifest => {
-        if (!current) return candidate;
-        const verDiff = compareVersionNames(candidate.versionName, current.versionName);
-        if (verDiff > 0 || (verDiff === 0 && candidate.versionCode > current.versionCode)) {
-          return candidate;
+      const considerCandidate = (candidate: RemoteVersionManifest) => {
+        if (!best) {
+          best = candidate;
+          return;
         }
-        return current;
+        const verDiff = compareVersionNames(candidate.versionName, best.versionName);
+        if (verDiff > 0 || (verDiff === 0 && candidate.versionCode > best.versionCode)) {
+          best = candidate;
+        }
       };
 
-      // On Android WebView, native HttpURLConnection bypasses GitHub 302 CORS restrictions
+      const tasks: Promise<void>[] = [];
+
+      // On Android WebView, native HttpURLConnection runs all endpoints concurrently without CORS overhead
       if (isRunningInAndroidApp()) {
-        const nativeManifest = await fetchNativeUpdateManifest();
-        if (nativeManifest) {
-          best = pickBest(best, {
-            versionCode: nativeManifest.versionCode,
-            versionName: nativeManifest.versionName,
-            apkUrl:
-              nativeManifest.apkUrl ||
-              `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${nativeManifest.versionName}/AG_File_Manager_v${nativeManifest.versionName}.apk`,
-          });
-        }
-      }
-
-      for (const url of urls) {
-        try {
-          const res = await fetch(url, { cache: 'no-store' });
-          if (!res.ok) continue;
-          const data = (await res.json()) as Partial<RemoteVersionManifest>;
-          if (typeof data.versionCode === 'number' && typeof data.versionName === 'string') {
-            best = pickBest(best, {
-              versionCode: data.versionCode,
-              versionName: data.versionName,
+        tasks.push(
+          fetchNativeUpdateManifest(3500).then((nativeManifest) => {
+            if (!nativeManifest) return;
+            considerCandidate({
+              versionCode: nativeManifest.versionCode,
+              versionName: nativeManifest.versionName,
               apkUrl:
-                data.apkUrl ||
-                `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${data.versionName}/AG_File_Manager_v${data.versionName}.apk`,
+                nativeManifest.apkUrl ||
+                `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${nativeManifest.versionName}/AG_File_Manager_v${nativeManifest.versionName}.apk`,
             });
-          }
-        } catch {
-          // try next endpoint
+          })
+        );
+      } else {
+        for (const url of urls) {
+          tasks.push(
+            fetchJsonWithTimeout<Partial<RemoteVersionManifest>>(url, undefined, 2800).then(
+              (data) => {
+                if (data && typeof data.versionCode === 'number' && typeof data.versionName === 'string') {
+                  considerCandidate({
+                    versionCode: data.versionCode,
+                    versionName: data.versionName,
+                    apkUrl:
+                      data.apkUrl ||
+                      `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${data.versionName}/AG_File_Manager_v${data.versionName}.apk`,
+                  });
+                }
+              }
+            )
+          );
         }
-      }
 
-      // Check GitHub Releases API (CORS-enabled) so releases are detected without committing version.json to main
-      try {
-        const relRes = await fetch(GITHUB_LATEST_RELEASE_API, {
-          cache: 'no-store',
-          headers: { Accept: 'application/vnd.github+json' },
-        });
-        if (relRes.ok) {
-          const rel = (await relRes.json()) as {
+        tasks.push(
+          fetchJsonWithTimeout<{
             tag_name?: string;
             assets?: Array<{ name?: string; browser_download_url?: string }>;
-          };
-          const relVersion = (rel.tag_name || '').replace(/^v/i, '').trim();
-          const apkAsset = rel.assets?.find((a) => a.name && /\.apk$/i.test(a.name));
-          if (relVersion && compareVersionNames(relVersion, effectiveCurrentName) > 0) {
-            const syntheticCode =
-              best && compareVersionNames(relVersion, best.versionName) <= 0
-                ? best.versionCode
-                : Math.max(effectiveCurrentCode + 1, best ? best.versionCode + 1 : effectiveCurrentCode + 1);
-            best = pickBest(best, {
-              versionCode: syntheticCode,
-              versionName: relVersion,
-              apkUrl:
-                apkAsset?.browser_download_url ||
-                `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${relVersion}/AG_File_Manager_v${relVersion}.apk`,
-            });
-          }
-        }
-      } catch {
-        // ignore network/rate-limit errors from GitHub API
+          }>(
+            GITHUB_LATEST_RELEASE_API,
+            { Accept: 'application/vnd.github+json' },
+            2800
+          ).then((rel) => {
+            if (!rel) return;
+            const relVersion = (rel.tag_name || '').replace(/^v/i, '').trim();
+            const apkAsset = rel.assets?.find((a) => a.name && /\.apk$/i.test(a.name));
+            if (relVersion && compareVersionNames(relVersion, effectiveCurrentName) > 0) {
+              const syntheticCode =
+                best && compareVersionNames(relVersion, best.versionName) <= 0
+                  ? best.versionCode
+                  : Math.max(
+                      effectiveCurrentCode + 1,
+                      best ? best.versionCode + 1 : effectiveCurrentCode + 1
+                    );
+              considerCandidate({
+                versionCode: syntheticCode,
+                versionName: relVersion,
+                apkUrl:
+                  apkAsset?.browser_download_url ||
+                  `${GITHUB_RELEASE_DOWNLOAD_BASE}/v${relVersion}/AG_File_Manager_v${relVersion}.apk`,
+              });
+            }
+          })
+        );
       }
 
+      await Promise.allSettled(tasks);
       return best;
     };
 
@@ -234,11 +263,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
       }
     };
 
-    const timer = window.setTimeout(runCheck, 220);
+    runCheck();
 
     return () => {
       mounted = false;
-      window.clearTimeout(timer);
+      checkController.abort();
       clearTimers();
     };
   }, [open, scenario, effectiveCurrentCode, effectiveCurrentName, newVersion]);

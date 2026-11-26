@@ -30,7 +30,9 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 data class UpdateInfo(
     val versionCode: Int,
@@ -433,41 +435,63 @@ class UpdateManager(
             "https://raw.githubusercontent.com/Abujar287/ag_file_manager/main/version.json"
         ).distinct()
 
+        val lock = Any()
         var lastError: Exception? = null
         var best: UpdateInfo? = null
+        val latch = CountDownLatch(candidates.size)
 
         for (urlStr in candidates) {
-            try {
-                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                    instanceFollowRedirects = true
-                    connectTimeout = 8000
-                    readTimeout = 8000
-                    requestMethod = "GET"
-                    setRequestProperty("User-Agent", "AGFileManager/${BuildConfig.VERSION_NAME}")
-                    setRequestProperty("Cache-Control", "no-cache")
-                }
-                if (conn.responseCode in 200..299) {
-                    val body = conn.inputStream.bufferedReader().use { it.readText() }
-                    val json = JSONObject(body)
-                    val info = UpdateInfo(
-                        versionCode = json.getInt("versionCode"),
-                        versionName = json.getString("versionName"),
-                        apkUrl = json.getString("apkUrl")
-                    )
-                    val verCmp = if (best == null) 1 else compareVer(info.versionName, best.versionName)
-                    if (best == null || verCmp > 0 || (verCmp == 0 && info.versionCode > best.versionCode)) {
-                        best = info
+            Thread {
+                var conn: HttpURLConnection? = null
+                try {
+                    conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                        instanceFollowRedirects = true
+                        connectTimeout = 2800
+                        readTimeout = 2800
+                        requestMethod = "GET"
+                        setRequestProperty("User-Agent", "AGFileManager/${BuildConfig.VERSION_NAME}")
+                        setRequestProperty("Cache-Control", "no-cache")
                     }
-                } else {
-                    lastError = IllegalStateException("Update server returned HTTP ${conn.responseCode}")
+                    if (conn.responseCode in 200..299) {
+                        val body = conn.inputStream.bufferedReader().use { it.readText() }
+                        val json = JSONObject(body)
+                        val info = UpdateInfo(
+                            versionCode = json.getInt("versionCode"),
+                            versionName = json.getString("versionName"),
+                            apkUrl = json.getString("apkUrl")
+                        )
+                        synchronized(lock) {
+                            val currentBest = best
+                            val verCmp = if (currentBest == null) 1 else compareVer(info.versionName, currentBest.versionName)
+                            if (currentBest == null || verCmp > 0 || (verCmp == 0 && info.versionCode > currentBest.versionCode)) {
+                                best = info
+                            }
+                        }
+                    } else {
+                        synchronized(lock) {
+                            lastError = IllegalStateException("Update server returned HTTP ${conn.responseCode}")
+                        }
+                    }
+                } catch (e: Exception) {
+                    synchronized(lock) {
+                        lastError = e
+                    }
+                } finally {
+                    conn?.disconnect()
+                    latch.countDown()
                 }
-            } catch (e: Exception) {
-                lastError = e
-            }
+            }.start()
         }
 
-        return best?.let { Result.success(it) }
-            ?: Result.failure(lastError ?: IllegalStateException("Unable to fetch update manifest"))
+        try {
+            latch.await(3400, TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+        }
+
+        return synchronized(lock) {
+            best?.let { Result.success(it) }
+                ?: Result.failure(lastError ?: IllegalStateException("Unable to fetch update manifest"))
+        }
     }
 
     private fun mapDownloadFailure(reason: Int): String = when (reason) {

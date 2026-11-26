@@ -1,6 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft,
   BarChart3,
   Check,
   ChevronDown,
@@ -28,7 +27,7 @@ interface AnalyzerViewProps {
   showThumbnails: boolean;
   sortBy?: SortBy;
   sortOrder?: SortOrder;
-  onBackHome: () => void;
+  onBackHome?: () => void;
   onSelectTool?: (tool: AnalyzerToolType) => void;
   onRefreshEmptyFolders?: () => void;
   onOpenFolder: (folderId: string) => void;
@@ -52,15 +51,6 @@ export const ANALYZER_TABS: { id: AnalyzerToolType; label: string }[] = [
   { id: 'app_cache', label: 'Apps Cache' },
   { id: 'duplicate_files', label: 'Duplicate Files' },
 ];
-
-const TOOL_TITLES: Record<AnalyzerToolType, string> = {
-  file_analyzer: 'File Analyzer',
-  large_files: 'Large Files',
-  recent_files: 'Recent Files',
-  empty_folders: 'Empty Folders',
-  app_cache: 'Apps Cache',
-  duplicate_files: 'Duplicate Files',
-};
 
 interface SelectableRowProps {
   node: FileNode;
@@ -179,7 +169,6 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
   showThumbnails,
   sortBy = 'name',
   sortOrder = 'asc',
-  onBackHome,
   onSelectTool,
   onRefreshEmptyFolders,
   onOpenFolder,
@@ -477,6 +466,10 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
       return;
     }
     const touch = e.touches[0];
+    if (touch.clientX <= 30 || touch.clientX >= window.innerWidth - 30) {
+      tabSwipeRef.current = null;
+      return;
+    }
     tabSwipeRef.current = {
       active: true,
       startX: touch.clientX,
@@ -532,21 +525,34 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
   );
 
   return (
-    <div className="max-w-5xl mx-auto px-3 sm:px-6 py-3 sm:py-4 space-y-3 sm:space-y-4 pb-24 overflow-x-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 min-w-0">
-        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-          <button
-            type="button"
-            onClick={onBackHome}
-            className="min-w-[38px] min-h-[38px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0"
-            aria-label="Back"
-          >
-            <ArrowLeft size={17} />
-          </button>
-          <h2 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-slate-100 truncate">
-            {TOOL_TITLES[tool]}
-          </h2>
+    <div className="max-w-5xl mx-auto px-3 sm:px-6 pt-2.5 sm:pt-3 pb-24 space-y-2.5 sm:space-y-3 overflow-x-hidden">
+      {/* Compact Horizontal Scrollable Tab Bar + Inline Select All */}
+      <div className="flex items-center gap-2 min-w-0">
+        <div
+          role="tablist"
+          aria-label="File Analyzer sections"
+          className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {ANALYZER_TABS.map((tab) => {
+            const isActive = tool === tab.id;
+            return (
+              <button
+                key={tab.id}
+                ref={isActive ? activeTabBtnRef : undefined}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => onSelectTool?.(tab.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
+                  isActive
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
         {visibleSelectableIds.length > 0 && (
@@ -555,39 +561,11 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
             onClick={() =>
               setSelectedIds(allVisibleSelected ? [] : visibleSelectableIds)
             }
-            className="px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0 whitespace-nowrap"
+            className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 shrink-0 whitespace-nowrap"
           >
             {allVisibleSelected ? 'Deselect All' : 'Select All'}
           </button>
         )}
-      </div>
-
-      {/* Horizontal Scrollable Tab Bar */}
-      <div
-        role="tablist"
-        aria-label="File Analyzer sections"
-        className="flex items-center gap-1.5 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {ANALYZER_TABS.map((tab) => {
-          const isActive = tool === tab.id;
-          return (
-            <button
-              key={tab.id}
-              ref={isActive ? activeTabBtnRef : undefined}
-              type="button"
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => onSelectTool?.(tab.id)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap shrink-0 transition-colors ${
-                isActive
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
-              }`}
-            >
-              {tab.label}
-            </button>
-          );
-        })}
       </div>
 
       {/* Selection Banner */}

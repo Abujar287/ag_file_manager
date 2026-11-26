@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import {
   BarChart3,
   Check,
@@ -24,6 +24,9 @@ interface NavigationDrawerProps {
   onToggleHidden: () => void;
   onToggleThumbnails: () => void;
   onCheckUpdate: () => void;
+  wrapperRef?: React.RefObject<HTMLDivElement | null>;
+  panelRef?: React.RefObject<HTMLDivElement | null>;
+  backdropRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
@@ -35,7 +38,17 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
   onToggleHidden,
   onToggleThumbnails,
   onCheckUpdate,
+  wrapperRef,
+  panelRef,
+  backdropRef,
 }) => {
+  const localWrapperRef = useRef<HTMLDivElement>(null);
+  const localPanelRef = useRef<HTMLDivElement>(null);
+  const localBackdropRef = useRef<HTMLDivElement>(null);
+  const resolvedWrapperRef = wrapperRef || localWrapperRef;
+  const resolvedPanelRef = panelRef || localPanelRef;
+  const resolvedBackdropRef = backdropRef || localBackdropRef;
+  const closeDragRef = useRef<{ startX: number; startY: number; lastDx: number; active: boolean } | null>(null);
   const isHome = activeScreen.type === 'home';
   const isInternal = activeScreen.type === 'folder' && activeScreen.folderId === 'internal_root';
   const isExternal = activeScreen.type === 'folder' && activeScreen.folderId === 'sd_root';
@@ -216,22 +229,98 @@ export const NavigationDrawer: React.FC<NavigationDrawerProps> = ({
     </div>
   );
 
+  const handleDrawerTouchStart = (e: React.TouchEvent) => {
+    if (!open || e.touches.length !== 1) return;
+    closeDragRef.current = {
+      startX: e.touches[0].clientX,
+      startY: e.touches[0].clientY,
+      lastDx: 0,
+      active: true,
+    };
+  };
+
+  const handleDrawerTouchMove = (e: React.TouchEvent) => {
+    const state = closeDragRef.current;
+    if (!state || !state.active || e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - state.startX;
+    const dy = e.touches[0].clientY - state.startY;
+    if (Math.abs(dy) > 26 && Math.abs(dy) > Math.abs(dx) * 0.9) {
+      closeDragRef.current = null;
+      if (resolvedPanelRef.current) {
+        resolvedPanelRef.current.style.transition = '';
+        resolvedPanelRef.current.style.transform = '';
+      }
+      if (resolvedBackdropRef.current) {
+        resolvedBackdropRef.current.style.transition = '';
+        resolvedBackdropRef.current.style.opacity = '';
+      }
+      return;
+    }
+    if (dx < 0 && Math.abs(dx) > Math.abs(dy)) {
+      const panelW = resolvedPanelRef.current?.offsetWidth || 280;
+      const clamped = Math.max(-panelW, Math.min(0, dx));
+      state.lastDx = clamped;
+      if (resolvedPanelRef.current) {
+        resolvedPanelRef.current.style.transition = 'none';
+        resolvedPanelRef.current.style.transform = `translate3d(${clamped}px, 0, 0)`;
+      }
+      if (resolvedBackdropRef.current) {
+        resolvedBackdropRef.current.style.transition = 'none';
+        resolvedBackdropRef.current.style.opacity = String(Math.max(0, 1 + clamped / panelW));
+      }
+    }
+  };
+
+  const handleDrawerTouchEnd = () => {
+    const state = closeDragRef.current;
+    closeDragRef.current = null;
+    if (resolvedPanelRef.current) {
+      resolvedPanelRef.current.style.transition = '';
+      resolvedPanelRef.current.style.transform = '';
+    }
+    if (resolvedBackdropRef.current) {
+      resolvedBackdropRef.current.style.transition = '';
+      resolvedBackdropRef.current.style.opacity = '';
+    }
+    if (state?.active && state.lastDx <= -52) {
+      onClose();
+    }
+  };
+
   return (
     <>
       <aside className="hidden lg:block w-72 shrink-0 h-[calc(100vh-3.5rem)] sticky top-14">
         {content}
       </aside>
 
-      {open && (
-        <div className="fixed inset-0 z-50 lg:hidden flex">
-          <div
-            className="fixed inset-0 bg-black/45"
-            onClick={onClose}
-            aria-hidden="true"
-          />
-          <div className="relative w-76 max-w-[85vw] h-full z-10 shadow-2xl">{content}</div>
+      <div
+        ref={resolvedWrapperRef}
+        aria-hidden={!open}
+        onTouchStart={handleDrawerTouchStart}
+        onTouchMove={handleDrawerTouchMove}
+        onTouchEnd={handleDrawerTouchEnd}
+        onTouchCancel={handleDrawerTouchEnd}
+        className={`fixed inset-0 z-50 lg:hidden flex transition-[visibility] duration-250 ${
+          open ? 'visible pointer-events-auto' : 'invisible pointer-events-none'
+        }`}
+      >
+        <div
+          ref={resolvedBackdropRef}
+          className={`fixed inset-0 bg-black/45 transition-opacity duration-250 ease-out ${
+            open ? 'opacity-100' : 'opacity-0'
+          }`}
+          onClick={onClose}
+          aria-hidden="true"
+        />
+        <div
+          ref={resolvedPanelRef}
+          className={`relative w-76 max-w-[85vw] h-full z-10 shadow-2xl will-change-transform transition-transform duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            open ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          {content}
         </div>
-      )}
+      </div>
     </>
   );
 };

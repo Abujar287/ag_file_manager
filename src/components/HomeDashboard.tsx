@@ -9,7 +9,6 @@ import {
   FolderMinus,
   Image as ImageIcon,
   Layers,
-  MemoryStick,
   Music,
   Package,
   PackageCheck,
@@ -80,7 +79,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
       {/* Background SVG matching the reference image MicroSD Card */}
       <svg
         className="absolute inset-0 w-full h-full pointer-events-none"
-        viewBox="0 0 340 156"
+        viewBox="0 0 340 200"
         preserveAspectRatio="none"
         aria-hidden="true"
       >
@@ -95,7 +94,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
 
         {/* MicroSD card body with rounded corners, side notches, and bottom stepped notch */}
         <path
-          d="M 14 3 H 326 Q 337 3 337 14 V 72 Q 337 75 335 76 L 333 78 L 335 80 Q 337 81 337 84 V 142 Q 337 153 326 153 H 176 L 164 146 H 108 L 96 153 H 14 Q 3 153 3 142 V 84 Q 3 81 5 80 L 7 78 L 5 76 Q 3 75 3 72 V 14 Q 3 3 14 3 Z"
+          d="M 16 3 H 324 Q 337 3 337 16 V 92 Q 337 96 335 97 L 333 100 L 335 103 Q 337 104 337 108 V 184 Q 337 197 324 197 H 176 L 164 189 H 108 L 96 197 H 16 Q 3 197 3 184 V 108 Q 3 104 5 103 L 7 100 L 5 97 Q 3 96 3 92 V 16 Q 3 3 16 3 Z"
           fill={`url(#${gradId})`}
           stroke="#586377"
           strokeWidth="1.5"
@@ -103,12 +102,12 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
         />
 
         {/* Subtle horizontal divider groove across the center */}
-        <line x1="7" y1="78" x2="333" y2="78" stroke="#222731" strokeWidth="1.5" />
+        <line x1="7" y1="100" x2="333" y2="100" stroke="#222731" strokeWidth="1.5" />
         <line
           x1="7"
-          y1="79.5"
+          y1="101.5"
           x2="333"
-          y2="79.5"
+          y2="101.5"
           stroke="#606A7E"
           strokeWidth="0.8"
           strokeOpacity="0.4"
@@ -116,74 +115,84 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
       </svg>
 
       {/* Foreground Content */}
-      <div className="relative z-10 px-2 sm:px-4 py-2.5 sm:py-3.5 flex items-center gap-1.5 sm:gap-3.5 min-h-[84px] sm:min-h-[114px]">
-        {/* Left: Storage Ring Gauge */}
-        <div className="relative w-9 h-9 sm:w-14 sm:h-14 shrink-0 flex items-center justify-center">
-          <svg
-            className="w-9 h-9 sm:w-14 sm:h-14 -rotate-90"
-            viewBox="0 0 36 36"
-            aria-hidden="true"
-          >
-            {/* Inner Dark Background */}
-            <circle cx="18" cy="18" r="16" fill="#242934" />
-            {/* Dark Track Circle */}
-            <circle cx="18" cy="18" r={radius} fill="none" stroke="#373E4D" strokeWidth="3.5" />
-            {/* Active Bright White Arc */}
-            {isMounted && (
-              <circle
-                cx="18"
-                cy="18"
-                r={radius}
-                fill="none"
-                stroke="#FFFFFF"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-                strokeDasharray={circumference}
-                strokeDashoffset={offset}
-              />
-            )}
-          </svg>
-          <span className="absolute text-[10px] sm:text-xs font-bold text-white tabular-nums tracking-tight">
-            {isMounted ? `${displayPercent}%` : '0%'}
-          </span>
-        </div>
+      <div className="relative z-10 px-2.5 sm:px-4 py-4 sm:py-5 flex items-center gap-2 sm:gap-3.5 min-h-[116px] sm:min-h-[146px]">
+        {(() => {
+          const freeBytes = Math.max(0, totalBytes - usedBytes);
+          const freePercent = isMounted ? Math.max(0, 100 - Math.min(100, Math.max(0, percent))) : 0;
+          const displayOffset = circumference - (freePercent / 100) * circumference;
 
-        {/* Right Content */}
-        <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5 sm:py-1 h-full">
-          {/* Top Row: Title + Arrow */}
-          <div className="flex items-center justify-between gap-1">
-            <h2 className="text-[10px] sm:text-sm font-bold text-white tracking-tight leading-tight">
-              {title}
-            </h2>
-            {isMounted && (
-              <ArrowRight
-                size={13}
-                className="text-[#8894A6] group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0"
-              />
-            )}
-          </div>
-
-          {/* Spacer / Divider clearance */}
-          <div className="h-0.5 sm:h-1.5" />
-
-          {/* Bottom Row: Storage Capacity Numbers */}
-          <div className="text-[9px] sm:text-xs tabular-nums leading-tight font-medium">
-            {isMounted ? (
-              <div className="flex flex-wrap items-baseline gap-x-1">
-                <span className="text-[#FF822E] font-bold whitespace-nowrap">
-                  {formatBytes(usedBytes, 1)}
-                </span>
-                <span className="text-[#8E99A9] whitespace-nowrap">
-                  / {formatBytes(totalBytes, 0)}
+          return (
+            <>
+              {/* Left: Storage Ring Gauge for Free Space */}
+              <div className="relative w-10 h-10 sm:w-14 sm:h-14 shrink-0 flex items-center justify-center">
+                <svg
+                  className="w-10 h-10 sm:w-14 sm:h-14 -rotate-90"
+                  viewBox="0 0 36 36"
+                  aria-hidden="true"
+                >
+                  {/* Inner Dark Background */}
+                  <circle cx="18" cy="18" r="16" fill="#242934" />
+                  {/* Dark Track Circle */}
+                  <circle cx="18" cy="18" r={radius} fill="none" stroke="#373E4D" strokeWidth="3.5" />
+                  {/* Active Bright Free Space Arc */}
+                  {isMounted && (
+                    <circle
+                      cx="18"
+                      cy="18"
+                      r={radius}
+                      fill="none"
+                      stroke="#FFFFFF"
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                      strokeDasharray={circumference}
+                      strokeDashoffset={displayOffset}
+                    />
+                  )}
+                </svg>
+                <span className="absolute text-[10px] sm:text-xs font-bold text-white tabular-nums tracking-tight">
+                  {isMounted ? `${freePercent}%` : '0%'}
                 </span>
               </div>
-            ) : (
-              <span className="text-slate-400 italic font-medium whitespace-nowrap">
-                {unmountedText}
-              </span>
-            )}
-          </div>
-        </div>
+
+              {/* Right Content */}
+              <div className="flex-1 min-w-0 flex flex-col justify-between py-1 sm:py-1.5 h-full">
+                {/* Top Row: Title + Arrow */}
+                <div className="flex items-center justify-between gap-1">
+                  <h2 className="text-[11px] sm:text-sm font-bold text-white tracking-tight leading-tight">
+                    {title}
+                  </h2>
+                  {isMounted && (
+                    <ArrowRight
+                      size={13}
+                      className="text-[#8894A6] group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0"
+                    />
+                  )}
+                </div>
+
+                {/* Spacer / Divider clearance */}
+                <div className="h-3 sm:h-4" />
+
+                {/* Bottom Row: Free Space / Total Storage + % free */}
+                <div className="text-[10px] sm:text-xs tabular-nums leading-tight font-medium">
+                  {isMounted ? (
+                    <div className="flex flex-wrap items-baseline gap-x-1">
+                      <span className="text-[#FF822E] font-bold whitespace-nowrap">
+                        {formatBytes(freeBytes, 1)} free
+                      </span>
+                      <span className="text-[#8E99A9] whitespace-nowrap">
+                        / {formatBytes(totalBytes, 0)} ({freePercent}% free)
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-slate-400 italic font-medium whitespace-nowrap">
+                      {unmountedText}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </>
+          );
+        })()}
       </div>
     </button>
   );
@@ -297,13 +306,48 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
       Math.round((finalSdUsed / finalSdTotal) * 100))
     : 0;
 
-  const quickTools: { id: AnalyzerToolType; label: string; icon: React.ReactNode }[] = [
-    { id: 'file_analyzer', label: 'File Analyzer', icon: <BarChart3 size={16} /> },
-    { id: 'large_files', label: 'Large Files', icon: <Layers size={16} /> },
-    { id: 'recent_files', label: 'Recent Files', icon: <Clock size={16} /> },
-    { id: 'empty_folders', label: 'Empty Folders', icon: <FolderMinus size={16} /> },
-    { id: 'app_cache', label: 'App Cache', icon: <Zap size={16} /> },
-    { id: 'duplicate_files', label: 'Duplicate Files', icon: <Copy size={16} /> },
+  const quickTools: {
+    id: AnalyzerToolType;
+    label: string;
+    icon: React.ReactNode;
+    squircleBg: string;
+  }[] = [
+    {
+      id: 'file_analyzer',
+      label: 'File Analyzer',
+      icon: <BarChart3 size={25} strokeWidth={1.9} />,
+      squircleBg: 'bg-[#2563EB]',
+    },
+    {
+      id: 'large_files',
+      label: 'Large Files',
+      icon: <Layers size={25} strokeWidth={1.9} />,
+      squircleBg: 'bg-[#6366F1]',
+    },
+    {
+      id: 'recent_files',
+      label: 'Recent Files',
+      icon: <Clock size={25} strokeWidth={1.9} />,
+      squircleBg: 'bg-[#0EA5E9]',
+    },
+    {
+      id: 'empty_folders',
+      label: 'Empty Folders',
+      icon: <FolderMinus size={25} strokeWidth={1.9} />,
+      squircleBg: 'bg-[#F97316]',
+    },
+    {
+      id: 'app_cache',
+      label: 'App Cache',
+      icon: <Zap size={25} strokeWidth={1.9} />,
+      squircleBg: 'bg-[#F59E0B]',
+    },
+    {
+      id: 'duplicate_files',
+      label: 'Duplicate Files',
+      icon: <Copy size={25} strokeWidth={1.9} />,
+      squircleBg: 'bg-[#EC4899]',
+    },
   ];
 
   const categories: {
@@ -421,7 +465,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
         </div>
       </section>
 
-      {/* 2. Categories Section (3x3 Grid) */}
+      {/* 2. Categories Section (3x5 Grid including Quick Analyzer rows) */}
       <section aria-label="Categories">
         <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
           Categories
@@ -450,28 +494,27 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
               </span>
             </button>
           ))}
-        </div>
 
-        {/* 3. Quick Analyzer Section (under Categories, starting on row below Recycle Bin, 3 per row) */}
-        <div className="mt-4 pt-4 border-t border-slate-200/70 dark:border-slate-800/80" aria-label="Quick Analyzer">
-          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
-            Quick Analyzer
-          </h3>
-          <div className="grid grid-cols-3 gap-2 sm:gap-3">
-            {quickTools.map((tool) => (
-              <button
-                key={tool.id}
-                type="button"
-                onClick={() => onOpenTool(tool.id)}
-                className="min-h-[64px] px-2 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700 transition-colors flex flex-col items-center justify-center gap-1.5 text-center"
+          {quickTools.map((tool) => (
+            <button
+              key={tool.id}
+              type="button"
+              onClick={() => onOpenTool(tool.id)}
+              className="group min-h-[78px] px-1 py-1 rounded-xl flex flex-col items-center justify-start text-center gap-1.5 transition-opacity active:opacity-75 focus-visible:outline-2 focus-visible:outline-blue-600"
+            >
+              <div
+                className={`relative w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center shadow-xs transition-transform group-hover:scale-105 ${tool.squircleBg}`}
               >
-                <span className="text-blue-600 dark:text-blue-400 shrink-0">{tool.icon}</span>
-                <span className="text-[11px] sm:text-xs font-medium text-slate-800 dark:text-slate-100 leading-tight w-full truncate">
-                  {tool.label}
+                <span className="text-white drop-shadow-xs" aria-hidden="true">
+                  {tool.icon}
                 </span>
-              </button>
-            ))}
-          </div>
+              </div>
+
+              <span className="text-[11px] sm:text-xs font-medium text-slate-800 dark:text-slate-200 leading-tight w-full truncate">
+                {tool.label}
+              </span>
+            </button>
+          ))}
         </div>
       </section>
     </div>

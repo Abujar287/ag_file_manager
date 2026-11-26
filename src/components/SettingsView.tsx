@@ -1,17 +1,16 @@
 import React from 'react';
-import { ArrowLeft, Monitor, Moon, Sun } from 'lucide-react';
+import { Monitor, Moon, Sun } from 'lucide-react';
 import { AppSettings, ThemeMode } from '../types/fileManager';
 
 interface SettingsViewProps {
   settings: AppSettings;
   onUpdateSettings: (patch: Partial<AppSettings>) => void;
-  onBackHome: () => void;
+  onBackHome?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   onUpdateSettings,
-  onBackHome,
 }) => {
   const themes: { id: ThemeMode; label: string; icon: React.ReactNode }[] = [
     { id: 'light', label: 'Light', icon: <Sun size={16} /> },
@@ -20,18 +19,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   ];
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-4 space-y-6">
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={onBackHome}
-          className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
-          aria-label="Back to Home"
-        >
-          <ArrowLeft size={18} />
-        </button>
-        <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">Settings</h2>
-      </div>
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-3 sm:py-4 space-y-4">
 
       {/* Theme Selector */}
       <section className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3">

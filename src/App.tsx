@@ -49,7 +49,7 @@ import {
 import { APP_VERSION_NAME } from './versionInfo';
 
 const LATEST_VERSION_NAME = APP_VERSION_NAME;
-const MAX_WINDOWS = 3;
+const MAX_WINDOWS = 6;
 
 function screensEqual(a: ActiveScreen, b: ActiveScreen): boolean {
   if (a.type !== b.type) return false;
@@ -80,7 +80,7 @@ function getScreenTitle(screen: ActiveScreen, files: FileNode[]): string {
         images: 'Images',
         videos: 'Videos',
         audio: 'Audio',
-        apps: 'Installed Apps',
+        apps: 'Apps',
         apk_files: 'APK Files',
         new_files: 'New Files',
         compressed: 'Compressed',
@@ -204,6 +204,7 @@ export default function App() {
   const [activeWindowId, setActiveWindowId] = useState<string | null>(null);
   const [utilityScreen, setUtilityScreen] = useState<ActiveScreen | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [rightMenuOpen, setRightMenuOpen] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -241,10 +242,22 @@ export default function App() {
     reason: string;
   } | null>(null);
 
-  // Swipe navigation state (DOM-driven to avoid 60fps full-tree re-renders)
+  // Swipe & edge-drag navigation state (DOM-driven to avoid 60fps full-tree re-renders)
   const swipeIndicatorRef = useRef<HTMLDivElement>(null);
   const swipeRightIndicatorRef = useRef<HTMLDivElement>(null);
-  const edgeSwipeRef = useRef<{ active: boolean; startX: number; startY: number; lastDx: number } | null>(null);
+  const leftWrapperRef = useRef<HTMLDivElement>(null);
+  const leftPanelRef = useRef<HTMLDivElement>(null);
+  const leftBackdropRef = useRef<HTMLDivElement>(null);
+  const rightWrapperRef = useRef<HTMLDivElement>(null);
+  const rightPanelRef = useRef<HTMLDivElement>(null);
+  const rightBackdropRef = useRef<HTMLDivElement>(null);
+  const edgeSwipeRef = useRef<{
+    active: boolean;
+    mode: 'left_drawer' | 'right_drawer' | 'window_swipe';
+    startX: number;
+    startY: number;
+    lastDx: number;
+  } | null>(null);
 
   // Exit dialog & storage permission states (Points 1, 2, 6)
   const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
@@ -729,9 +742,9 @@ export default function App() {
       return;
     }
 
-    // Categories (including Recycle Bin, Images, Videos, Apps, etc.), Analyzer tools,
-    // Settings, and About are always accessible even when all 3 folder windows (W1-W3) are open.
-    if (screen.type !== 'folder') {
+    // Settings and About open as utility overlays without consuming a browsing window.
+    // Folders, Categories (including Apps), and Analyzer tools open as windows (up to MAX_WINDOWS = 6).
+    if (screen.type === 'settings' || screen.type === 'about') {
       setUtilityScreen(screen);
       syncScreenSideEffects(screen);
       return;
@@ -745,7 +758,7 @@ export default function App() {
       if (windowsRef.current.length >= MAX_WINDOWS) {
         setUtilityScreen(null);
         setActiveWindowId(null);
-        showToast(`Maximum ${MAX_WINDOWS} folder windows limit reached. Close a window to open another.`);
+        showToast(`Maximum ${MAX_WINDOWS} windows limit reached. Close a window to open another.`);
         return;
       }
 
@@ -823,6 +836,10 @@ export default function App() {
     }
     if (updateModalOpen) {
       setUpdateModalOpen(false);
+      return;
+    }
+    if (rightMenuOpen) {
+      setRightMenuOpen(false);
       return;
     }
     if (drawerOpen) {
@@ -1035,11 +1052,11 @@ export default function App() {
   }, [syncScreenSideEffects]);
 
   const handleCloseOtherWindows = useCallback(() => {
-    const currId = activeWindowIdRef.current;
+    const currId = activeWindowIdRef.current || activeWindowId;
     if (!currId) return;
     setWindows((prev) => prev.filter((w) => w.id === currId));
     showToast('Closed other windows');
-  }, [showToast]);
+  }, [activeWindowId, showToast]);
 
   const handleCloseAllWindows = useCallback(() => {
     setWindows([]);
@@ -1848,19 +1865,19 @@ export default function App() {
       : -1;
 
   const nextWindowOnRight =
-    !utilityScreen && !searchOpen
-      ? currentWindowIdx === -1
-        ? windows.length > 0
-          ? { index: 0, window: windows[0] }
-          : null
-        : currentWindowIdx < windows.length - 1
-          ? { index: currentWindowIdx + 1, window: windows[currentWindowIdx + 1] }
-          : null
+    !utilityScreen && !searchOpen && windows.length > 0
+      ? {
+          index: (currentWindowIdx === -1 ? 0 : currentWindowIdx + 1) % windows.length,
+          window: windows[(currentWindowIdx === -1 ? 0 : currentWindowIdx + 1) % windows.length],
+        }
       : null;
 
   const prevWindowOnLeft =
-    !utilityScreen && !searchOpen && currentWindowIdx > 0
-      ? { index: currentWindowIdx - 1, window: windows[currentWindowIdx - 1] }
+    !utilityScreen && !searchOpen && windows.length > 0
+      ? {
+          index: (currentWindowIdx === -1 ? windows.length - 1 : currentWindowIdx - 1 + windows.length) % windows.length,
+          window: windows[(currentWindowIdx === -1 ? windows.length - 1 : currentWindowIdx - 1 + windows.length) % windows.length],
+        }
       : null;
 
   const updateSwipeIndicator = useCallback((dx: number) => {
@@ -1889,11 +1906,42 @@ export default function App() {
     }
   }, []);
 
+  const resetLeftDrawerDragStyles = useCallback(() => {
+    if (leftWrapperRef.current) {
+      leftWrapperRef.current.style.visibility = '';
+      leftWrapperRef.current.style.pointerEvents = '';
+    }
+    if (leftPanelRef.current) {
+      leftPanelRef.current.style.transition = '';
+      leftPanelRef.current.style.transform = '';
+    }
+    if (leftBackdropRef.current) {
+      leftBackdropRef.current.style.transition = '';
+      leftBackdropRef.current.style.opacity = '';
+    }
+  }, []);
+
+  const resetRightDrawerDragStyles = useCallback(() => {
+    if (rightWrapperRef.current) {
+      rightWrapperRef.current.style.visibility = '';
+      rightWrapperRef.current.style.pointerEvents = '';
+    }
+    if (rightPanelRef.current) {
+      rightPanelRef.current.style.transition = '';
+      rightPanelRef.current.style.transform = '';
+    }
+    if (rightBackdropRef.current) {
+      rightBackdropRef.current.style.transition = '';
+      rightBackdropRef.current.style.opacity = '';
+    }
+  }, []);
+
   const handleRootTouchStart = useCallback((e: React.TouchEvent) => {
     if (
       e.touches.length !== 1 ||
       viewingFile ||
       drawerOpen ||
+      rightMenuOpen ||
       updateModalOpen ||
       viewSortModalOpen ||
       Boolean(moveTargetIds) ||
@@ -1908,10 +1956,24 @@ export default function App() {
       edgeSwipeRef.current = null;
       return;
     }
-    // Skip swipe when inside a horizontally scrollable strip (breadcrumbs, open windows strip, etc.)
+
+    const touch = e.touches[0];
+    const EDGE_ZONE_PX = 30;
+    const isLeftEdge = touch.clientX <= EDGE_ZONE_PX;
+    const isRightEdge = touch.clientX >= window.innerWidth - EDGE_ZONE_PX;
+    const mode: 'left_drawer' | 'right_drawer' | 'window_swipe' = isLeftEdge
+      ? 'left_drawer'
+      : isRightEdge
+        ? 'right_drawer'
+        : 'window_swipe';
+
     let el = e.target as HTMLElement | null;
     while (el && el !== e.currentTarget) {
-      if (el.scrollWidth > el.clientWidth + 4) {
+      if ((isLeftEdge || isRightEdge) && el.tagName === 'HEADER') {
+        edgeSwipeRef.current = null;
+        return;
+      }
+      if (mode === 'window_swipe' && el.scrollWidth > el.clientWidth + 4) {
         const style = window.getComputedStyle(el);
         if (style.overflowX === 'auto' || style.overflowX === 'scroll') {
           edgeSwipeRef.current = null;
@@ -1920,9 +1982,10 @@ export default function App() {
       }
       el = el.parentElement;
     }
-    const touch = e.touches[0];
+
     edgeSwipeRef.current = {
       active: true,
+      mode,
       startX: touch.clientX,
       startY: touch.clientY,
       lastDx: 0,
@@ -1930,6 +1993,7 @@ export default function App() {
   }, [
     viewingFile,
     drawerOpen,
+    rightMenuOpen,
     updateModalOpen,
     viewSortModalOpen,
     moveTargetIds,
@@ -1951,14 +2015,58 @@ export default function App() {
       edgeSwipeRef.current = null;
       updateSwipeIndicator(0);
       updateRightSwipeIndicator(0);
+      resetLeftDrawerDragStyles();
+      resetRightDrawerDragStyles();
       return;
     }
+
+    if (state.mode === 'left_drawer') {
+      if (dx > 4 && dx > Math.abs(dy)) {
+        const panelW = leftPanelRef.current?.offsetWidth || 280;
+        const clamped = Math.min(panelW, Math.max(0, dx));
+        state.lastDx = clamped;
+        if (leftWrapperRef.current) {
+          leftWrapperRef.current.style.visibility = 'visible';
+          leftWrapperRef.current.style.pointerEvents = 'auto';
+        }
+        if (leftPanelRef.current) {
+          leftPanelRef.current.style.transition = 'none';
+          leftPanelRef.current.style.transform = `translate3d(${-panelW + clamped}px, 0, 0)`;
+        }
+        if (leftBackdropRef.current) {
+          leftBackdropRef.current.style.transition = 'none';
+          leftBackdropRef.current.style.opacity = String(Math.min(1, clamped / panelW));
+        }
+      }
+      return;
+    }
+
+    if (state.mode === 'right_drawer') {
+      if (dx < -4 && Math.abs(dx) > Math.abs(dy)) {
+        const panelW = rightPanelRef.current?.offsetWidth || 280;
+        const clamped = Math.max(-panelW, Math.min(0, dx));
+        state.lastDx = clamped;
+        if (rightWrapperRef.current) {
+          rightWrapperRef.current.style.visibility = 'visible';
+          rightWrapperRef.current.style.pointerEvents = 'auto';
+        }
+        if (rightPanelRef.current) {
+          rightPanelRef.current.style.transition = 'none';
+          rightPanelRef.current.style.transform = `translate3d(${panelW + clamped}px, 0, 0)`;
+        }
+        if (rightBackdropRef.current) {
+          rightBackdropRef.current.style.transition = 'none';
+          rightBackdropRef.current.style.opacity = String(Math.min(1, Math.abs(clamped) / panelW));
+        }
+      }
+      return;
+    }
+
     const canSwipeLeftToRight =
-      (prevWindowOnLeft !== null ||
-        currentWindowIdx === 0 ||
-        searchOpen ||
-        utilityScreen !== null) &&
-      state.startX <= Math.max(280, window.innerWidth * 0.85);
+      prevWindowOnLeft !== null ||
+      currentWindowIdx === 0 ||
+      searchOpen ||
+      utilityScreen !== null;
 
     if (dx > 8 && dx > Math.abs(dy) * 1.15 && canSwipeLeftToRight) {
       const clamped = Math.min(110, dx);
@@ -1979,11 +2087,31 @@ export default function App() {
     utilityScreen,
     updateSwipeIndicator,
     updateRightSwipeIndicator,
+    resetLeftDrawerDragStyles,
+    resetRightDrawerDragStyles,
   ]);
 
   const handleRootTouchEnd = useCallback(() => {
     const state = edgeSwipeRef.current;
-    if (state?.active && state.lastDx >= 64) {
+    edgeSwipeRef.current = null;
+
+    if (state?.active && state.mode === 'left_drawer') {
+      resetLeftDrawerDragStyles();
+      if (state.lastDx >= 48) {
+        setDrawerOpen(true);
+      }
+      return;
+    }
+
+    if (state?.active && state.mode === 'right_drawer') {
+      resetRightDrawerDragStyles();
+      if (state.lastDx <= -48) {
+        setRightMenuOpen(true);
+      }
+      return;
+    }
+
+    if (state?.active && state.lastDx >= 64 && windows.length > 0) {
       if (searchOpen) {
         setSearchOpen(false);
         setSearchQuery('');
@@ -1992,17 +2120,16 @@ export default function App() {
       } else if (prevWindowOnLeft) {
         syncScreenSideEffects(prevWindowOnLeft.window.screen);
         setActiveWindowId(prevWindowOnLeft.window.id);
-      } else if (currentWindowIdx === 0) {
-        setActiveWindowId(null);
       }
-    } else if (state?.active && state.lastDx <= -64 && nextWindowOnRight) {
+    } else if (state?.active && state.lastDx <= -64 && windows.length > 0) {
       setSearchOpen(false);
       setSearchQuery('');
       setUtilityScreen(null);
-      syncScreenSideEffects(nextWindowOnRight.window.screen);
-      setActiveWindowId(nextWindowOnRight.window.id);
+      if (nextWindowOnRight) {
+        syncScreenSideEffects(nextWindowOnRight.window.screen);
+        setActiveWindowId(nextWindowOnRight.window.id);
+      }
     }
-    edgeSwipeRef.current = null;
     updateSwipeIndicator(0);
     updateRightSwipeIndicator(0);
   }, [
@@ -2014,6 +2141,8 @@ export default function App() {
     syncScreenSideEffects,
     updateSwipeIndicator,
     updateRightSwipeIndicator,
+    resetLeftDrawerDragStyles,
+    resetRightDrawerDragStyles,
   ]);
 
   const handleBackActionRef = useRef(handleBackAction);
@@ -2110,7 +2239,7 @@ export default function App() {
 
   return (
     <div
-      className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100"
+      className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overscroll-x-none"
       onTouchStart={handleRootTouchStart}
       onTouchMove={handleRootTouchMove}
       onTouchEnd={handleRootTouchEnd}
@@ -2126,7 +2255,7 @@ export default function App() {
           <>
             <ChevronLeft size={16} className="shrink-0" />
             <span className="text-xs font-semibold truncate">
-              W{prevWindowOnLeft.index + 1} · {prevWindowOnLeft.window.title}
+              {prevWindowOnLeft.window.title}
             </span>
           </>
         ) : (
@@ -2144,9 +2273,7 @@ export default function App() {
         className="fixed right-0 top-1/2 -translate-y-1/2 z-50 pointer-events-none items-center gap-1.5 pl-3 pr-2 py-2.5 rounded-l-2xl bg-blue-600 text-white shadow-xl max-w-[190px]"
       >
         <span className="text-xs font-semibold truncate">
-          {nextWindowOnRight
-            ? `W${nextWindowOnRight.index + 1} · ${nextWindowOnRight.window.title}`
-            : 'Next'}
+          {nextWindowOnRight ? nextWindowOnRight.window.title : 'Next'}
         </span>
         <ChevronRight size={16} className="shrink-0" />
       </div>
@@ -2198,10 +2325,15 @@ export default function App() {
         onCloseWindow={handleCloseWindow}
         onCloseOtherWindows={handleCloseOtherWindows}
         onCloseAllWindows={handleCloseAllWindows}
+        rightMenuOpen={rightMenuOpen}
+        onRightMenuOpenChange={setRightMenuOpen}
+        rightWrapperRef={rightWrapperRef}
+        rightPanelRef={rightPanelRef}
+        rightBackdropRef={rightBackdropRef}
       />
 
       <div className="flex-1 flex">
-        {/* Left Navigation Drawer (Docked on lg+, slide-over on smaller screens) */}
+        {/* Left Navigation Drawer (Docked on lg+, smooth slide-over on smaller screens) */}
         <NavigationDrawer
           open={drawerOpen}
           onClose={() => setDrawerOpen(false)}
@@ -2215,6 +2347,9 @@ export default function App() {
             setSettings((prev) => ({ ...prev, showThumbnails: !prev.showThumbnails }))
           }
           onCheckUpdate={() => setUpdateModalOpen(true)}
+          wrapperRef={leftWrapperRef}
+          panelRef={leftPanelRef}
+          backdropRef={leftBackdropRef}
         />
 
         {/* Main Viewport */}

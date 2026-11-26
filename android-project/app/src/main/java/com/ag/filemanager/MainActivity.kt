@@ -50,7 +50,9 @@ import java.net.URL
 import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MainActivity : Activity() {
 
@@ -1904,6 +1906,7 @@ class MainActivity : Activity() {
         @JavascriptInterface
         fun fetchLatestUpdateManifestAsync(requestId: String) {
             ioExecutor.execute {
+                val lock = Any()
                 var bestCode = -1
                 var bestName = ""
                 var bestUrl = ""
@@ -1922,21 +1925,24 @@ class MainActivity : Activity() {
 
                 fun considerCandidate(code: Int, name: String, url: String) {
                     if (name.isBlank() || code <= 0) return
-                    val verCmp = compareVer(name, bestName)
-                    val better = bestCode < 0 || verCmp > 0 || (verCmp == 0 && code > bestCode)
-                    if (better) {
-                        bestCode = code
-                        bestName = name
-                        bestUrl = url
+                    synchronized(lock) {
+                        val verCmp = compareVer(name, bestName)
+                        val better = bestCode < 0 || verCmp > 0 || (verCmp == 0 && code > bestCode)
+                        if (better) {
+                            bestCode = code
+                            bestName = name
+                            bestUrl = url
+                        }
                     }
                 }
 
                 fun fetchText(urlStr: String, acceptHeader: String? = null): String? {
+                    var conn: HttpURLConnection? = null
                     return try {
-                        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                        conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                             instanceFollowRedirects = true
-                            connectTimeout = 8000
-                            readTimeout = 8000
+                            connectTimeout = 2800
+                            readTimeout = 2800
                             requestMethod = "GET"
                             setRequestProperty("User-Agent", "AGFileManager/${BuildConfig.VERSION_NAME}")
                             setRequestProperty("Cache-Control", "no-cache")
@@ -1949,6 +1955,8 @@ class MainActivity : Activity() {
                         }
                     } catch (_: Exception) {
                         null
+                    } finally {
+                        conn?.disconnect()
                     }
                 }
 
@@ -1957,57 +1965,83 @@ class MainActivity : Activity() {
                     "$REMOTE_MANIFEST_URL?t=$ts",
                     "https://raw.githubusercontent.com/Abujar287/ag_file_manager/main/version.json?t=$ts"
                 )
+
+                val latch = CountDownLatch(manifestCandidates.size + 1)
+
                 for (u in manifestCandidates) {
-                    val body = fetchText(u) ?: continue
-                    try {
-                        val json = JSONObject(body)
-                        val vCode = json.optInt("versionCode", -1)
-                        val vName = json.optString("versionName", "").trim()
-                        val apkUrl = json.optString("apkUrl", "").ifBlank {
-                            "https://github.com/Abujar287/ag_file_manager/releases/download/v$vName/AG_File_Manager_v$vName.apk"
+                    Thread {
+                        try {
+                            val body = fetchText(u)
+                            if (body != null) {
+                                val json = JSONObject(body)
+                                val vCode = json.optInt("versionCode", -1)
+                                val vName = json.optString("versionName", "").trim()
+                                val apkUrl = json.optString("apkUrl", "").ifBlank {
+                                    "https://github.com/Abujar287/ag_file_manager/releases/download/v$vName/AG_File_Manager_v$vName.apk"
+                                }
+                                considerCandidate(vCode, vName, apkUrl)
+                            }
+                        } catch (_: Exception) {
+                        } finally {
+                            latch.countDown()
                         }
-                        considerCandidate(vCode, vName, apkUrl)
-                    } catch (_: Exception) {
-                    }
+                    }.start()
                 }
 
-                // Fallback: GitHub Releases API in case version.json wasn't attached or lags behind tag
-                val apiBody = fetchText(
-                    "https://api.github.com/repos/Abujar287/ag_file_manager/releases/latest",
-                    "application/vnd.github+json"
-                )
-                if (apiBody != null) {
+                Thread {
                     try {
-                        val rel = JSONObject(apiBody)
-                        val relVer = rel.optString("tag_name", "").trim().removePrefix("v").removePrefix("V")
-                        if (relVer.isNotBlank() && (bestName.isBlank() || compareVer(relVer, bestName) > 0)) {
-                            var apkUrl = "https://github.com/Abujar287/ag_file_manager/releases/download/v$relVer/AG_File_Manager_v$relVer.apk"
-                            val assets = rel.optJSONArray("assets")
-                            if (assets != null) {
-                                for (i in 0 until assets.length()) {
-                                    val asset = assets.optJSONObject(i) ?: continue
-                                    val aName = asset.optString("name", "")
-                                    if (aName.endsWith(".apk", ignoreCase = true)) {
-                                        apkUrl = asset.optString("browser_download_url", apkUrl)
-                                        break
+                        val apiBody = fetchText(
+                            "https://api.github.com/repos/Abujar287/ag_file_manager/releases/latest",
+                            "application/vnd.github+json"
+                        )
+                        if (apiBody != null) {
+                            val rel = JSONObject(apiBody)
+                            val relVer = rel.optString("tag_name", "").trim().removePrefix("v").removePrefix("V")
+                            if (relVer.isNotBlank()) {
+                                val isNewerThanCurrentBest = synchronized(lock) {
+                                    bestName.isBlank() || compareVer(relVer, bestName) > 0
+                                }
+                                if (isNewerThanCurrentBest) {
+                                    var apkUrl = "https://github.com/Abujar287/ag_file_manager/releases/download/v$relVer/AG_File_Manager_v$relVer.apk"
+                                    val assets = rel.optJSONArray("assets")
+                                    if (assets != null) {
+                                        for (i in 0 until assets.length()) {
+                                            val asset = assets.optJSONObject(i) ?: continue
+                                            val aName = asset.optString("name", "")
+                                            if (aName.endsWith(".apk", ignoreCase = true)) {
+                                                apkUrl = asset.optString("browser_download_url", apkUrl)
+                                                break
+                                            }
+                                        }
                                     }
+                                    val syntheticCode = synchronized(lock) {
+                                        maxOf(BuildConfig.VERSION_CODE + 1, if (bestCode > 0) bestCode + 1 else 1)
+                                    }
+                                    considerCandidate(syntheticCode, relVer, apkUrl)
                                 }
                             }
-                            val syntheticCode = maxOf(BuildConfig.VERSION_CODE + 1, if (bestCode > 0) bestCode + 1 else 1)
-                            considerCandidate(syntheticCode, relVer, apkUrl)
                         }
                     } catch (_: Exception) {
+                    } finally {
+                        latch.countDown()
                     }
+                }.start()
+
+                try {
+                    latch.await(3400, TimeUnit.MILLISECONDS)
+                } catch (_: InterruptedException) {
                 }
 
-                val payload = JSONObject().apply {
-                    put("requestId", requestId)
-                    if (bestCode > 0 && bestName.isNotBlank()) {
-                        put("manifest", JSONObject().apply {
-                            put("versionCode", bestCode)
-                            put("versionName", bestName)
-                            put("apkUrl", bestUrl)
-                        })
+                val payload = synchronized(lock) {
+                    JSONObject().apply {
+                        put("requestId", requestId)
+                        if (bestCode > 0 && bestName.isNotBlank()) {
+                            put("manifest", JSONObject().apply {
+                                put("versionCode", bestCode)
+                                put("versionName", bestName)
+                                put("apkUrl", bestUrl)
+                            })
+                        }
                     }
                 }
                 dispatchWebEvent("android_update_manifest_result", payload)
