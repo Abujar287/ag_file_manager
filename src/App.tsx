@@ -76,7 +76,7 @@ function getScreenTitle(screen: ActiveScreen, files: FileNode[]): string {
       return node?.name || 'Folder';
     }
     case 'category': {
-      const labels: Record<CategoryType, string> = {
+      const labels: Record<string, string> = {
         images: 'Images',
         videos: 'Videos',
         audio: 'Audio',
@@ -86,8 +86,16 @@ function getScreenTitle(screen: ActiveScreen, files: FileNode[]): string {
         compressed: 'Compressed',
         documents: 'Documents',
         recycle_bin: 'Recycle Bin',
+        cleaner: 'Cleaner',
+        disguised_videos: 'Disguised videos',
+        disguised_images: 'Disguised images',
+        view_on_pc: 'View on PC',
+        cloud_drive: 'Cloud Drive',
+        lan: 'LAN',
+        ftp: 'FTP',
+        all_tools: 'All Tools',
       };
-      return labels[screen.category];
+      return labels[screen.category] || 'Category';
     }
     case 'analyzer': {
       const labels: Record<AnalyzerToolType, string> = {

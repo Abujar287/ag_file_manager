@@ -74,7 +74,7 @@ interface FileBrowserProps {
   onShowProperties: (nodes: FileNode[]) => void;
 }
 
-const CATEGORY_TITLES: Record<CategoryType, string> = {
+const CATEGORY_TITLES: Record<string, string> = {
   images: 'Images',
   videos: 'Videos',
   audio: 'Audio',
@@ -84,6 +84,14 @@ const CATEGORY_TITLES: Record<CategoryType, string> = {
   compressed: 'Compressed',
   documents: 'Documents',
   recycle_bin: 'Recycle Bin',
+  cleaner: 'Cleaner',
+  disguised_videos: 'Disguised videos',
+  disguised_images: 'Disguised images',
+  view_on_pc: 'View on PC',
+  cloud_drive: 'Cloud Drive',
+  lan: 'LAN',
+  ftp: 'FTP',
+  all_tools: 'All Tools',
 };
 
 interface RowProps {

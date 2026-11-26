@@ -34,7 +34,15 @@ export type CategoryType =
   | 'new_files'
   | 'compressed'
   | 'documents'
-  | 'recycle_bin';
+  | 'recycle_bin'
+  | 'cleaner'
+  | 'disguised_videos'
+  | 'disguised_images'
+  | 'view_on_pc'
+  | 'cloud_drive'
+  | 'lan'
+  | 'ftp'
+  | 'all_tools';
 
 export interface InstalledApp {
   packageName: string;

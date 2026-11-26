@@ -4,12 +4,17 @@ import {
   ArrowRight,
   BarChart3,
   Clock,
+  Cloud,
   Copy,
   FileText,
+  Folder,
   FolderMinus,
   Image as ImageIcon,
   Layers,
+  LayoutGrid,
+  Monitor,
   Music,
+  Network,
   Package,
   PackageCheck,
   Sparkles,
@@ -203,7 +208,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
     let intBytes = 0;
     let extBytes = 0;
     const sevenDaysAgo = Date.now() - 7 * 24 * 3600 * 1000;
-    const catCounts: Record<CategoryType, number> = {
+    const catCounts: Record<string, number> = {
       images: 0,
       videos: 0,
       audio: 0,
@@ -321,65 +326,27 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
   ];
 
   const categories: {
-    id: CategoryType;
+    id: CategoryType | string;
     label: string;
     icon: React.ReactNode;
     squircleBg: string;
   }[] = [
-    {
-      id: 'images',
-      label: 'Images',
-      icon: <ImageIcon size={28} strokeWidth={1.9} />,
-      squircleBg: 'bg-[#F4585A]',
-    },
-    {
-      id: 'videos',
-      label: 'Videos',
-      icon: <Video size={28} strokeWidth={1.9} />,
-      squircleBg: 'bg-[#0D8CFF]',
-    },
-    {
-      id: 'audio',
-      label: 'Audio',
-      icon: <Music size={28} strokeWidth={1.9} />,
-      squircleBg: 'bg-[#9E33FF]',
-    },
-    {
-      id: 'apps',
-      label: 'Apps',
-      icon: <Package size={28} strokeWidth={1.9} />,
-      squircleBg: 'bg-[#11C72A]',
-    },
-    {
-      id: 'apk_files',
-      label: 'APK Files',
-      icon: <PackageCheck size={28} strokeWidth={1.9} />,
-      squircleBg: 'bg-[#059669]',
-    },
-    {
-      id: 'new_files',
-      label: 'New Files',
-      icon: <Sparkles size={28} strokeWidth={1.9} />,
-      squircleBg: 'bg-[#FF8C1A]',
-    },
-    {
-      id: 'compressed',
-      label: 'Compressed',
-      icon: <Archive size={28} strokeWidth={1.9} />,
-      squircleBg: 'bg-[#0CB4F5]',
-    },
-    {
-      id: 'documents',
-      label: 'Documents',
-      icon: <FileText size={28} strokeWidth={1.9} />,
-      squircleBg: 'bg-[#EAB308]',
-    },
-    {
-      id: 'recycle_bin',
-      label: 'Recycle Bin',
-      icon: <Trash2 size={28} strokeWidth={1.9} />,
-      squircleBg: 'bg-[#7A92AC]',
-    },
+    { id: 'images', label: 'Images', icon: <ImageIcon size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#F4585A]' },
+    { id: 'videos', label: 'Videos', icon: <Video size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#0D8CFF]' },
+    { id: 'audio', label: 'Audio', icon: <Music size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#9E33FF]' },
+    { id: 'apps', label: 'APP', icon: <Package size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#11C72A]' },
+    { id: 'cleaner', label: 'Cleaner', icon: <Zap size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#10B981]' },
+    { id: 'disguised_videos', label: 'Disguised videos', icon: <Video size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#3B82F6]' },
+    { id: 'disguised_images', label: 'Disguised images', icon: <ImageIcon size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#3B82F6]' },
+    { id: 'new_files', label: 'New Files', icon: <Sparkles size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#FF8C1A]' },
+    { id: 'compressed', label: 'Compressed', icon: <Archive size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#06B6D4]' },
+    { id: 'view_on_pc', label: 'View on PC', icon: <Monitor size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#2563EB]' },
+    { id: 'cloud_drive', label: 'Cloud Drive', icon: <Cloud size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#6366F1]' },
+    { id: 'documents', label: 'Documents', icon: <FileText size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#EAB308]' },
+    { id: 'lan', label: 'LAN', icon: <Network size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#3B82F6]' },
+    { id: 'ftp', label: 'FTP', icon: <Folder size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#3B82F6]' },
+    { id: 'recycle_bin', label: 'Recycle Bin', icon: <Trash2 size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#64748B]' },
+    { id: 'all_tools', label: 'All Tools', icon: <LayoutGrid size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#475569]' },
   ];
 
   return (
@@ -454,7 +421,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
             <button
               key={cat.id}
               type="button"
-              onClick={() => onOpenCategory(cat.id)}
+              onClick={() => onOpenCategory(cat.id as CategoryType)}
               className="group min-h-[90px] px-1 py-1 rounded-xl flex flex-col items-center justify-start text-center gap-1.5 transition-opacity active:opacity-75 focus-visible:outline-2 focus-visible:outline-blue-600"
             >
               <div
