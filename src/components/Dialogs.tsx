@@ -1358,33 +1358,7 @@ export const FileViewerDialog: React.FC<FileViewerDialogProps> = ({
             />
           </div>
 
-          {/* Previous / Next Navigation Arrows */}
-          {showOverlay && hasPrev && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                goPrevMedia();
-              }}
-              className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/55 hover:bg-black/80 border border-white/15 text-white flex items-center justify-center shadow-lg"
-              aria-label="Previous"
-            >
-              <ChevronLeft size={22} />
-            </button>
-          )}
-          {showOverlay && hasNext && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                goNextMedia();
-              }}
-              className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-black/55 hover:bg-black/80 border border-white/15 text-white flex items-center justify-center shadow-lg"
-              aria-label="Next"
-            >
-              <ChevronRight size={22} />
-            </button>
-          )}
+
         </div>
 
         {/* Bottom Filmstrip & Gallery Action Bar */}

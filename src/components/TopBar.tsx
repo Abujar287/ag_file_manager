@@ -111,8 +111,6 @@ interface TopBarProps {
   onNewItem: (type: 'folder' | 'text' | 'file') => void;
   onUploadFiles: () => void;
   onOpenViewSort: () => void;
-  historyPaths: { id: string; label: string; path: string }[];
-  onNavigateHistory: (folderId: string) => void;
   windows: TabWindow[];
   activeWindowId: string | null;
   isHomeActive: boolean;
@@ -129,7 +127,7 @@ interface TopBarProps {
   rightBackdropRef?: React.RefObject<HTMLDivElement | null>;
 }
 
-type OverflowSubmenu = 'root' | 'new' | 'history' | 'windows';
+type OverflowSubmenu = 'root' | 'new' | 'windows';
 
 export const TopBar: React.FC<TopBarProps> = ({
   onOpenDrawer,
@@ -141,8 +139,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   onNewItem,
   onUploadFiles,
   onOpenViewSort,
-  historyPaths,
-  onNavigateHistory,
   windows,
   activeWindowId,
   isHomeActive,
@@ -538,9 +534,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   ← Back ·{' '}
                   {submenu === 'new'
                     ? 'New'
-                    : submenu === 'history'
-                      ? 'History'
-                      : `Windows (${windows.length}/${maxWindows})`}
+                    : `Windows (${windows.length}/${maxWindows})`}
                 </span>
               </button>
             )}
@@ -578,14 +572,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSubmenu('history')}
-                  className="w-full min-h-[44px] px-4 py-2.5 flex items-center justify-between text-left text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/80"
-                >
-                  <span>History</span>
-                  <ChevronRight size={16} className="text-slate-400" />
-                </button>
-                <button
-                  type="button"
                   onClick={() => setSubmenu('windows')}
                   className="w-full min-h-[44px] px-4 py-2.5 flex items-center justify-between text-left text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/80"
                 >
@@ -601,10 +587,10 @@ export const TopBar: React.FC<TopBarProps> = ({
                     onCloseOtherWindows();
                     closeMenu();
                   }}
-                  disabled={isHomeActive || windows.length <= 1}
+                  disabled={windows.length <= 1}
                   className="w-full min-h-[44px] px-4 py-2.5 text-left text-slate-800 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/80 disabled:opacity-40 disabled:pointer-events-none"
                 >
-                  Close Other Windows
+                  Close Other Tabs
                 </button>
               </>
             )}
@@ -655,38 +641,6 @@ export const TopBar: React.FC<TopBarProps> = ({
                   <Upload size={16} className="text-emerald-600" />
                   <span>Import from Device</span>
                 </button>
-              </div>
-            )}
-
-            {submenu === 'history' && (
-              <div className="py-1">
-                {historyPaths.length === 0 ? (
-                  <div className="px-4 py-3 text-xs text-slate-500">
-                    No folders visited yet
-                  </div>
-                ) : (
-                  historyPaths.map((h) => (
-                    <button
-                      key={h.id}
-                      type="button"
-                      onClick={() => {
-                        onNavigateHistory(h.id);
-                        closeMenu();
-                      }}
-                      className="w-full px-4 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/80 flex items-start gap-2.5"
-                    >
-                      <Clock size={14} className="text-slate-400 mt-0.5 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-slate-800 dark:text-slate-200 truncate">
-                          {h.label}
-                        </div>
-                        <div className="text-xs font-mono text-slate-500 truncate">
-                          {h.path}
-                        </div>
-                      </div>
-                    </button>
-                  ))
-                )}
               </div>
             )}
 

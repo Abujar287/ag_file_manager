@@ -216,14 +216,9 @@ export default function App() {
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [historyPaths, setHistoryPaths] = useState<{ id: string; label: string; path: string }[]>(() =>
-    isRunningInAndroidApp()
-      ? [{ id: 'internal_root', label: 'Internal', path: '/storage/emulated/0' }]
-      : [
-          { id: 'dir_download', label: 'Download', path: '/storage/emulated/0/Download' },
-          { id: 'dir_documents', label: 'Documents', path: '/storage/emulated/0/Documents' },
-        ]
-  );
+  const [pullStartY, setPullStartY] = useState<number | null>(null);
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const [clipboard, setClipboard] = useState<ClipboardState | null>(null);
   const [newItemType, setNewItemType] = useState<'folder' | 'text' | 'file' | null>(null);
@@ -704,14 +699,6 @@ export default function App() {
       if (isRunningInAndroidApp()) {
         loadNativeFolder(screen.folderId);
       }
-      const folderNode = currentFiles.find((f) => f.id === screen.folderId);
-      if (folderNode) {
-        const path = getNodePath(folderNode.id, currentFiles);
-        setHistoryPaths((prev) => [
-          { id: folderNode.id, label: folderNode.name, path },
-          ...prev.filter((item) => item.id !== folderNode.id),
-        ].slice(0, 12));
-      }
     } else if (screen.type === 'category' && isRunningInAndroidApp()) {
       if (screen.category === 'apps') {
         loadInstalledApps(false);
@@ -1050,9 +1037,14 @@ export default function App() {
 
   const handleCloseOtherWindows = useCallback(() => {
     const currId = activeWindowIdRef.current || activeWindowId;
-    if (!currId) return;
-    setWindows((prev) => prev.filter((w) => w.id === currId));
-    showToast('Closed other windows');
+    setWindows((prev) => {
+      if (currId) {
+        const target = prev.find((w) => w.id === currId);
+        return target ? [target] : (prev.length > 0 ? [prev[0]] : []);
+      }
+      return prev.length > 0 ? [prev[0]] : [];
+    });
+    showToast('Closed other tabs');
   }, [activeWindowId, showToast]);
 
   const handleCloseAllWindows = useCallback(() => {
@@ -2275,21 +2267,89 @@ export default function App() {
   );
   const handleDeleteViewerFileMemo = useCallback(
     (target: FileNode) => {
-      setViewingFile(null);
-      setViewingContextFiles([]);
+      const list = viewingContextFiles.length > 0 ? viewingContextFiles : files;
+      const idx = list.findIndex((n) => n.id === target.id);
+      let nextFile: FileNode | null = null;
+      let nextContext = viewingContextFiles;
+      if (idx !== -1) {
+        const remaining = list.filter((n) => n.id !== target.id);
+        nextContext = viewingContextFiles.length > 0 ? viewingContextFiles.filter((n) => n.id !== target.id) : [];
+        if (remaining.length > 0) {
+          nextFile = remaining[Math.min(idx, remaining.length - 1)];
+        }
+      }
+      setViewingFile(nextFile);
+      setViewingContextFiles(nextContext);
       requestDeleteConfirm([target.id], false);
     },
-    [requestDeleteConfirm]
+    [viewingContextFiles, files, requestDeleteConfirm]
   );
+
+  const handlePullTouchStart = (e: React.TouchEvent) => {
+    if (window.scrollY <= 0) {
+      setPullStartY(e.touches[0].clientY);
+    }
+  };
+  const handlePullTouchMove = (e: React.TouchEvent) => {
+    if (pullStartY !== null && window.scrollY <= 0) {
+      const dy = e.touches[0].clientY - pullStartY;
+      if (dy > 0) {
+        setPullDistance(Math.min(dy * 0.45, 100));
+      } else {
+        setPullDistance(0);
+      }
+    }
+  };
+  const handlePullTouchEnd = () => {
+    if (pullDistance > 55 && !isRefreshing) {
+      setIsRefreshing(true);
+      setTimeout(() => {
+        try {
+          const raw = localStorage.getItem(FILES_STORAGE_KEY);
+          if (raw) setFiles(JSON.parse(raw));
+        } catch {}
+        setIsRefreshing(false);
+        setPullDistance(0);
+        setPullStartY(null);
+        showToast('Refreshed successfully');
+      }, 500);
+    } else {
+      setPullDistance(0);
+      setPullStartY(null);
+    }
+  };
 
   return (
     <div
       className="min-h-screen flex flex-col bg-[#12161f] text-slate-100 overscroll-x-none"
-      onTouchStart={handleRootTouchStart}
-      onTouchMove={handleRootTouchMove}
-      onTouchEnd={handleRootTouchEnd}
-      onTouchCancel={handleRootTouchEnd}
+      onTouchStart={(e) => {
+        handlePullTouchStart(e);
+        handleRootTouchStart(e);
+      }}
+      onTouchMove={(e) => {
+        handlePullTouchMove(e);
+        handleRootTouchMove(e);
+      }}
+      onTouchEnd={(e) => {
+        handlePullTouchEnd();
+        handleRootTouchEnd(e);
+      }}
+      onTouchCancel={(e) => {
+        handlePullTouchEnd();
+        handleRootTouchEnd(e);
+      }}
     >
+      {(pullDistance > 0 || isRefreshing) && (
+        <div
+          style={{ height: `${isRefreshing ? 48 : pullDistance}px` }}
+          className="overflow-hidden flex items-center justify-center bg-[#1b2230] text-blue-400 text-xs font-semibold transition-all duration-150 select-none border-b border-slate-800 shrink-0"
+        >
+          <div className="flex items-center gap-2">
+            <span className="animate-spin">⟳</span>
+            <span>{isRefreshing ? 'Refreshing...' : 'Release to refresh'}</span>
+          </div>
+        </div>
+      )}
 
 
       {/* Hidden file picker for importing individual real files from device */}
@@ -2328,8 +2388,6 @@ export default function App() {
         onNewItem={(type) => setNewItemType(type)}
         onUploadFiles={() => fileUploadInputRef.current?.click()}
         onOpenViewSort={() => setViewSortModalOpen(true)}
-        historyPaths={historyPaths}
-        onNavigateHistory={(folderId) => navigateInActiveTab({ type: 'folder', folderId })}
         windows={windows}
         activeWindowId={activeWindow?.id ?? null}
         isHomeActive={isHomeActive}

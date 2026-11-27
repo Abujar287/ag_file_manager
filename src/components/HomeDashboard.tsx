@@ -77,7 +77,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
       type="button"
       disabled={!isMounted}
       onClick={() => isMounted && onClick()}
-      className={`group relative w-full text-left rounded-2xl transition-transform duration-150 focus-visible:outline-2 focus-visible:outline-blue-500 select-none ${
+      className={`group relative w-full text-left rounded-2xl overflow-hidden transition-transform duration-150 focus-visible:outline-2 focus-visible:outline-blue-500 select-none ${
         isMounted ? 'cursor-pointer active:scale-[0.98]' : 'cursor-not-allowed opacity-85'
       }`}
     >
@@ -106,10 +106,10 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
         <line x1="7" y1="71.5" x2="333" y2="71.5" stroke="#606A7E" strokeWidth="0.8" strokeOpacity="0.4" />
       </svg>
 
-      <div className="relative z-10 px-2 py-2 sm:px-4 sm:py-3.5 flex items-center gap-2 sm:gap-3.5 min-h-[72px] sm:min-h-[82px]">
+      <div className="relative z-10 px-1.5 min-[360px]:px-2.5 sm:px-4 py-2 sm:py-3.5 flex items-center gap-1.5 sm:gap-3 min-h-[72px] sm:min-h-[82px] overflow-hidden">
         {/* Left: Storage Ring Gauge */}
-        <div className="relative w-8 h-8 sm:w-11 sm:h-11 shrink-0 flex items-center justify-center">
-          <svg className="w-8 h-8 sm:w-11 sm:h-11 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
+        <div className="relative w-7 h-7 min-[380px]:w-8 min-[380px]:h-8 sm:w-11 sm:h-11 shrink-0 flex items-center justify-center">
+          <svg className="w-7 h-7 min-[380px]:w-8 min-[380px]:h-8 sm:w-11 sm:h-11 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
             <circle cx="18" cy="18" r="16" fill="#242934" />
             <circle cx="18" cy="18" r={radius} fill="none" stroke="#373E4D" strokeWidth="3.2" />
             {isMounted && (
@@ -126,41 +126,52 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
               />
             )}
           </svg>
-          <span className="absolute text-[7px] sm:text-[10px] font-bold text-white tabular-nums tracking-tight">
+          <span className="absolute text-[6.5px] min-[380px]:text-[7.5px] sm:text-[10px] font-bold text-white tabular-nums tracking-tight">
             {isMounted ? `${freePercent}%` : '0%'}
           </span>
         </div>
 
-        {/* Right Content */}
-        <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 sm:gap-1.5">
-          <div className="flex items-center justify-between gap-1">
-            <h2 className="text-[10px] sm:text-sm font-bold text-white tracking-tight leading-none truncate">
+        {/* Right Content - Strictly 1 Line per Row & Never Overflows Border */}
+        <div className="flex-1 min-w-0 overflow-hidden flex flex-col justify-center gap-0.5 sm:gap-1">
+          {/* Row 1: Title and Arrow in 1 Line */}
+          <div className="flex items-center justify-between gap-0.5 min-w-0 w-full overflow-hidden">
+            <h2 className="text-[9px] min-[350px]:text-[10px] min-[400px]:text-[11px] sm:text-sm font-bold text-white tracking-tight leading-none truncate min-w-0 flex-1">
               {title}
             </h2>
             {isMounted && (
               <ArrowRight
-                size={12}
-                className="text-[#8894A6] group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0"
+                size={11}
+                className="text-[#8894A6] group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-0.5"
               />
             )}
           </div>
 
-          <div className="text-[9px] sm:text-xs tabular-nums leading-none font-medium">
+          {/* Row 2: Free Storage / Total Storage in 1 Line */}
+          <div className="text-[7.5px] min-[350px]:text-[8px] min-[400px]:text-[9px] sm:text-xs tabular-nums leading-none font-semibold min-w-0 overflow-hidden">
             {isMounted ? (
-              <div className="flex items-center gap-0.5 sm:gap-1 whitespace-nowrap text-nowrap flex-nowrap">
-                <span className="text-white font-bold">
-                  {formatBytes(freeBytes, 2)}
+              <div className="flex items-center gap-0.5 whitespace-nowrap text-nowrap flex-nowrap overflow-hidden truncate">
+                <span className="text-white font-bold shrink-0">
+                  <span className="hidden min-[440px]:inline">{formatBytes(freeBytes, 2)} Free</span>
+                  <span className="min-[440px]:hidden">{formatBytes(freeBytes, 1)} Free</span>
                 </span>
-                <span className="text-[#8E99A9]">
-                  / {formatBytes(totalBytes, 2)}
+                <span className="text-[#8E99A9] truncate">
+                  <span className="hidden min-[440px]:inline">/ {formatBytes(totalBytes, 2)}</span>
+                  <span className="min-[440px]:hidden">/ {formatBytes(totalBytes, 1)}</span>
                 </span>
               </div>
             ) : (
-              <span className="text-slate-400 italic font-medium whitespace-nowrap text-[9px] sm:text-xs">
+              <span className="text-slate-400 italic font-medium whitespace-nowrap text-[8px] sm:text-xs truncate block">
                 {unmountedText}
               </span>
             )}
           </div>
+
+          {/* Row 3: MB Free in 1 Line */}
+          {isMounted && (
+            <div className="text-[7.5px] min-[350px]:text-[8px] min-[400px]:text-[9px] sm:text-[11px] text-[#8E99A9] tabular-nums leading-none font-medium whitespace-nowrap truncate overflow-hidden">
+              {Math.round(freeBytes / (1024 * 1024)).toLocaleString()} MB Free
+            </div>
+          )}
         </div>
       </div>
     </button>
@@ -369,9 +380,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
       {/* 1. Storage Overview — Distinct Subtle Container Background */}
       <section
         aria-label="Storage Overview"
-        className="p-2.5 sm:p-4 rounded-3xl bg-[#1b2230]/90 border border-slate-800 shadow-sm"
+        className="p-1.5 sm:p-4 rounded-3xl bg-[#1b2230]/90 border border-slate-800 shadow-sm"
       >
-        <div className="grid grid-cols-2 gap-2 sm:gap-4">
+        <div className="grid grid-cols-2 gap-1.5 sm:gap-4">
           {/* Internal Storage Card */}
           <MicroSdCard
             id="internal"
