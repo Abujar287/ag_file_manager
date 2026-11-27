@@ -106,10 +106,10 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
         <line x1="7" y1="71.5" x2="333" y2="71.5" stroke="#606A7E" strokeWidth="0.8" strokeOpacity="0.4" />
       </svg>
 
-      <div className="relative z-10 px-3 py-2.5 sm:px-4 sm:py-3.5 flex items-center gap-2.5 sm:gap-3.5 min-h-[72px] sm:min-h-[82px]">
+      <div className="relative z-10 px-2 py-2 sm:px-4 sm:py-3.5 flex items-center gap-2 sm:gap-3.5 min-h-[72px] sm:min-h-[82px]">
         {/* Left: Storage Ring Gauge */}
-        <div className="relative w-9 h-9 sm:w-11 sm:h-11 shrink-0 flex items-center justify-center">
-          <svg className="w-9 h-9 sm:w-11 sm:h-11 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
+        <div className="relative w-8 h-8 sm:w-11 sm:h-11 shrink-0 flex items-center justify-center">
+          <svg className="w-8 h-8 sm:w-11 sm:h-11 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
             <circle cx="18" cy="18" r="16" fill="#242934" />
             <circle cx="18" cy="18" r={radius} fill="none" stroke="#373E4D" strokeWidth="3.2" />
             {isMounted && (
@@ -126,7 +126,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
               />
             )}
           </svg>
-          <span className="absolute text-[8px] sm:text-[10px] font-bold text-white tabular-nums tracking-tight">
+          <span className="absolute text-[7px] sm:text-[10px] font-bold text-white tabular-nums tracking-tight">
             {isMounted ? `${freePercent}%` : '0%'}
           </span>
         </div>
@@ -134,20 +134,20 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
         {/* Right Content */}
         <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 sm:gap-1.5">
           <div className="flex items-center justify-between gap-1">
-            <h2 className="text-[11px] sm:text-sm font-bold text-white tracking-tight leading-none truncate">
+            <h2 className="text-[10px] sm:text-sm font-bold text-white tracking-tight leading-none truncate">
               {title}
             </h2>
             {isMounted && (
               <ArrowRight
-                size={13}
+                size={12}
                 className="text-[#8894A6] group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0"
               />
             )}
           </div>
 
-          <div className="text-[10px] sm:text-xs tabular-nums leading-none font-medium">
+          <div className="text-[9px] sm:text-xs tabular-nums leading-none font-medium">
             {isMounted ? (
-              <div className="flex items-center gap-1 whitespace-nowrap text-nowrap flex-nowrap">
+              <div className="flex items-center gap-0.5 sm:gap-1 whitespace-nowrap text-nowrap flex-nowrap">
                 <span className="text-white font-bold">
                   {formatBytes(freeBytes, 2)}
                 </span>
@@ -156,7 +156,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
                 </span>
               </div>
             ) : (
-              <span className="text-slate-400 italic font-medium whitespace-nowrap">
+              <span className="text-slate-400 italic font-medium whitespace-nowrap text-[9px] sm:text-xs">
                 {unmountedText}
               </span>
             )}
@@ -335,18 +335,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
     { id: 'videos', label: 'Videos', icon: <Video size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#0D8CFF]' },
     { id: 'audio', label: 'Audio', icon: <Music size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#9E33FF]' },
     { id: 'apps', label: 'APP', icon: <Package size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#11C72A]' },
-    { id: 'cleaner', label: 'Cleaner', icon: <Zap size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#10B981]' },
-    { id: 'disguised_videos', label: 'Disguised videos', icon: <Video size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#3B82F6]' },
-    { id: 'disguised_images', label: 'Disguised images', icon: <ImageIcon size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#3B82F6]' },
-    { id: 'new_files', label: 'New Files', icon: <Sparkles size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#FF8C1A]' },
     { id: 'compressed', label: 'Compressed', icon: <Archive size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#06B6D4]' },
-    { id: 'view_on_pc', label: 'View on PC', icon: <Monitor size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#2563EB]' },
-    { id: 'cloud_drive', label: 'Cloud Drive', icon: <Cloud size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#6366F1]' },
     { id: 'documents', label: 'Documents', icon: <FileText size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#EAB308]' },
-    { id: 'lan', label: 'LAN', icon: <Network size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#3B82F6]' },
-    { id: 'ftp', label: 'FTP', icon: <Folder size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#3B82F6]' },
     { id: 'recycle_bin', label: 'Recycle Bin', icon: <Trash2 size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#64748B]' },
-    { id: 'all_tools', label: 'All Tools', icon: <LayoutGrid size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#475569]' },
   ];
 
   return (
