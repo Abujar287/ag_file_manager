@@ -272,7 +272,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
 
   const targetSdTotal = 64 * 1024 * 1024 * 1024;
   const targetSdUsed = 28.4 * 1024 * 1024 * 1024;
-  const finalSdMounted = true; // Always show External Storage mounted and active matching screenshot
+  const finalSdMounted = sdCardMounted;
   const finalSdTotal = storageStats?.external?.totalBytes || targetSdTotal;
   const finalSdUsed =
     storageStats?.external?.usedBytes ??
@@ -335,6 +335,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
     { id: 'videos', label: 'Videos', icon: <Video size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#0D8CFF]' },
     { id: 'audio', label: 'Audio', icon: <Music size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#9E33FF]' },
     { id: 'apps', label: 'APP', icon: <Package size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#11C72A]' },
+    { id: 'apk_files', label: 'APK', icon: <PackageCheck size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#3B82F6]' },
     { id: 'compressed', label: 'Compressed', icon: <Archive size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#06B6D4]' },
     { id: 'documents', label: 'Documents', icon: <FileText size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#EAB308]' },
     { id: 'recycle_bin', label: 'Recycle Bin', icon: <Trash2 size={28} strokeWidth={1.9} />, squircleBg: 'bg-[#64748B]' },
@@ -390,7 +391,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
             usedBytes={finalSdUsed}
             totalBytes={finalSdTotal}
             isMounted={finalSdMounted}
-            unmountedText="No card found"
+            unmountedText="No card insert"
             onClick={() => onOpenFolder('sd_root')}
           />
         </div>
