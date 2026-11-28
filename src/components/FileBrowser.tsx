@@ -34,6 +34,7 @@ import {
   buildChildrenMap,
   ChildrenMap,
   computeFolderStatsFromMap,
+  computeMultiSelectionStats,
   formatBytes,
   formatDateTime,
   getExtension,
@@ -676,6 +677,10 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
     () => files.filter((n) => selectedSet.has(n.id)),
     [files, selectedSet]
   );
+  const selectedStats = useMemo(
+    () => computeMultiSelectionStats(selectedNodes, files, showHidden),
+    [selectedNodes, files, showHidden]
+  );
 
   return (
     <div className="max-w-5xl mx-auto pb-24">
@@ -750,19 +755,24 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
 
       {/* Multi-Select Header Banner */}
       {isSelecting && (
-        <div className="mx-4 sm:mx-6 mt-3 px-4 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
+        <div className="mx-4 sm:mx-6 mt-3 px-4 py-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900 flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
             <button
               type="button"
               onClick={() => setSelectedIds([])}
-              className="p-1 rounded-lg text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50"
+              className="p-1 rounded-lg text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 shrink-0"
               aria-label="Clear selection"
             >
               <X size={17} />
             </button>
-            <span className="text-sm font-semibold text-blue-900 dark:text-blue-100 tabular-nums">
-              {selectedIds.length} selected
-            </span>
+            <div className="flex items-center gap-2 min-w-0 truncate">
+              <span className="text-sm font-semibold text-blue-900 dark:text-blue-100 tabular-nums">
+                {selectedIds.length} selected
+              </span>
+              <span className="text-xs font-bold text-blue-700 dark:text-blue-300 tabular-nums bg-blue-100/90 dark:bg-blue-900/60 px-2 py-0.5 rounded-md shrink-0">
+                {formatBytes(selectedStats.totalBytes, 2)}
+              </span>
+            </div>
           </div>
           <button
             type="button"
@@ -771,7 +781,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
                 selectedIds.length === sortedItems.length ? [] : sortedItems.map((i) => i.id)
               )
             }
-            className="text-xs font-semibold text-blue-700 dark:text-blue-300 hover:underline px-2 py-1"
+            className="text-xs font-semibold text-blue-700 dark:text-blue-300 hover:underline px-2 py-1 shrink-0 whitespace-nowrap"
           >
             {selectedIds.length === sortedItems.length ? 'Deselect All' : 'Select All'}
           </button>
@@ -931,7 +941,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
                   className="min-h-[48px] flex-1 flex flex-col items-center justify-center gap-1 rounded-xl text-rose-600 dark:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium"
                 >
                   <Trash2 size={18} />
-                  <span>Delete Forever</span>
+                  <span>
+                    Delete Forever{selectedStats.totalBytes > 0 ? ` (${formatBytes(selectedStats.totalBytes, 1)})` : ''}
+                  </span>
                 </button>
               </>
             ) : (
@@ -969,7 +981,9 @@ export const FileBrowser: React.FC<FileBrowserProps> = memo(({
                   className="min-h-[48px] flex-1 flex flex-col items-center justify-center gap-1 rounded-xl text-rose-600 dark:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium"
                 >
                   <Trash2 size={18} />
-                  <span>Delete</span>
+                  <span>
+                    Delete{selectedStats.totalBytes > 0 ? ` (${formatBytes(selectedStats.totalBytes, 1)})` : ''}
+                  </span>
                 </button>
 
                 <button

@@ -14,7 +14,7 @@ import {
   ViewMode,
 } from './types/fileManager';
 import { INITIAL_FILES } from './data/initialFileSystem';
-import { getBaseName, getNodePath, inferFileKind } from './utils/formatters';
+import { computeMultiSelectionStats, getBaseName, getNodePath, inferFileKind } from './utils/formatters';
 import { buildZipBlob, triggerBlobDownload } from './utils/zipExport';
 import { TopBar } from './components/TopBar';
 import { NavigationDrawer } from './components/NavigationDrawer';
@@ -2616,6 +2616,25 @@ export default function App() {
             ? (files.find((f) => f.id === deleteConfirm.ids[0]) ||
                 nativeEmptyFolders.find((f) => f.id === deleteConfirm.ids[0]))?.name
             : undefined
+        }
+        totalBytes={
+          deleteConfirm
+            ? deleteConfirm.isEmptyBin
+              ? files
+                  .filter((f) => f.trashed)
+                  .reduce((acc, f) => acc + (f.kind === 'folder' ? 0 : f.size), 0)
+              : computeMultiSelectionStats(
+                  deleteConfirm.ids
+                    .map(
+                      (id) =>
+                        files.find((f) => f.id === id) ||
+                        nativeEmptyFolders.find((f) => f.id === id)
+                    )
+                    .filter((n): n is FileNode => Boolean(n)),
+                  files,
+                  true
+                ).totalBytes
+            : 0
         }
         permanentOnly={Boolean(deleteConfirm?.permanentOnly)}
         isEmptyBin={Boolean(deleteConfirm?.isEmptyBin)}

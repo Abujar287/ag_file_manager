@@ -2353,6 +2353,7 @@ interface DeleteConfirmDialogProps {
   open: boolean;
   itemCount: number;
   singleItemName?: string;
+  totalBytes?: number;
   permanentOnly?: boolean;
   isEmptyBin?: boolean;
   onCancel: () => void;
@@ -2364,6 +2365,7 @@ export const DeleteConfirmDialog: React.FC<DeleteConfirmDialogProps> = ({
   open,
   itemCount,
   singleItemName,
+  totalBytes,
   permanentOnly = false,
   isEmptyBin = false,
   onCancel,
@@ -2372,8 +2374,15 @@ export const DeleteConfirmDialog: React.FC<DeleteConfirmDialogProps> = ({
 }) => {
   if (!open) return null;
 
+  const sizeText =
+    totalBytes !== undefined && totalBytes > 0 ? formatBytes(totalBytes, 2) : undefined;
+  const sizeMbFormatted =
+    totalBytes !== undefined && totalBytes > 0
+      ? `${Math.round(totalBytes / (1024 * 1024)).toLocaleString()} MB`
+      : undefined;
+
   const title = isEmptyBin
-    ? 'Empty Recycle Bin?'
+    ? `Empty Recycle Bin${sizeText ? ` (${sizeText})` : ''}?`
     : permanentOnly
       ? itemCount === 1 && singleItemName
         ? `Delete "${singleItemName}" permanently?`
@@ -2411,6 +2420,15 @@ export const DeleteConfirmDialog: React.FC<DeleteConfirmDialogProps> = ({
           </div>
         </div>
 
+        {totalBytes !== undefined && totalBytes > 0 && (
+          <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/70 text-xs">
+            <span className="text-slate-600 dark:text-slate-300 font-medium">Total Size to Delete:</span>
+            <span className="text-rose-600 dark:text-rose-400 font-bold tabular-nums">
+              {sizeText} {sizeMbFormatted && `(${sizeMbFormatted})`}
+            </span>
+          </div>
+        )}
+
         <div className="flex flex-col gap-2 pt-1">
           {!permanentOnly && onMoveToBin && (
             <button
@@ -2418,7 +2436,7 @@ export const DeleteConfirmDialog: React.FC<DeleteConfirmDialogProps> = ({
               onClick={onMoveToBin}
               className="w-full min-h-[42px] px-4 py-2 rounded-xl text-sm font-semibold bg-blue-600 hover:bg-blue-700 text-white"
             >
-              Move to Recycle Bin
+              Move to Recycle Bin{sizeText ? ` (${sizeText})` : ''}
             </button>
           )}
           <button
@@ -2426,7 +2444,9 @@ export const DeleteConfirmDialog: React.FC<DeleteConfirmDialogProps> = ({
             onClick={onDeletePermanently}
             className="w-full min-h-[42px] px-4 py-2 rounded-xl text-sm font-semibold bg-rose-600 hover:bg-rose-700 text-white"
           >
-            {isEmptyBin ? 'Empty Recycle Bin' : 'Delete Permanently'}
+            {isEmptyBin
+              ? `Empty Recycle Bin${sizeText ? ` (${sizeText})` : ''}`
+              : `Delete Permanently${sizeText ? ` (${sizeText})` : ''}`}
           </button>
           <button
             type="button"

@@ -211,27 +211,17 @@ export async function getLiveStorageStats(
     }
   }
 
-  // Web browser fallback: use real navigator.storage.estimate() if available
-  let deviceTotal = 128 * 1024 * 1024 * 1024;
-  let deviceUsed = 48.2 * 1024 * 1024 * 1024;
-
-  if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
-    try {
-      const estimate = await navigator.storage.estimate();
-      if (estimate.quota && estimate.quota > 0) {
-        deviceTotal = estimate.quota;
-        if (estimate.usage) {
-          deviceUsed = estimate.usage + fallbackFilesBytes;
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  deviceUsed = Math.min(deviceTotal, deviceUsed + fallbackFilesBytes);
+  // Web browser fallback: realistic Android device storage baseline
+  const deviceTotal = 108.15 * 1024 * 1024 * 1024; // 108.15 GB user partition
+  const baseUsed = 60.86 * 1024 * 1024 * 1024;     // 60.86 GB OS + baseline used
+  const deviceUsed = Math.min(deviceTotal, baseUsed + fallbackFilesBytes);
   const free = Math.max(0, deviceTotal - deviceUsed);
   const pct = Math.round((deviceUsed / deviceTotal) * 100);
+
+  const extTotal = 64 * 1024 * 1024 * 1024;        // 64 GB SD card
+  const extUsed = 28.4 * 1024 * 1024 * 1024;
+  const extFree = Math.max(0, extTotal - extUsed);
+  const extPct = Math.round((extUsed / extTotal) * 100);
 
   return {
     internal: {
@@ -242,11 +232,12 @@ export async function getLiveStorageStats(
       rootPath: '/storage/emulated/0',
     },
     external: {
-      isMounted: false,
-      totalBytes: 0,
-      usedBytes: 0,
-      freeBytes: 0,
-      usedPercent: 0,
+      isMounted: true,
+      totalBytes: extTotal,
+      usedBytes: extUsed,
+      freeBytes: extFree,
+      usedPercent: extPct,
+      rootPath: '/storage/sdcard1',
     },
   };
 }

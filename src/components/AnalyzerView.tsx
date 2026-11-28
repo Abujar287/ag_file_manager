@@ -16,7 +16,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { AnalyzerToolType, FileNode, SortBy, SortOrder } from '../types/fileManager';
-import { formatBytes, formatDateTime, sortFileNodes } from '../utils/formatters';
+import { computeMultiSelectionStats, formatBytes, formatDateTime, sortFileNodes } from '../utils/formatters';
 import { FileIcon } from './FileIcon';
 
 interface AnalyzerViewProps {
@@ -451,6 +451,11 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
     return pool.filter((f) => selectedIds.includes(f.id));
   }, [tool, nativeEmptyFolders, files, selectedIds]);
 
+  const selectedBytes = useMemo(() => {
+    if (tool === 'empty_folders') return 0;
+    return computeMultiSelectionStats(selectedNodes, files, true).totalBytes;
+  }, [tool, selectedNodes, files]);
+
   const activeTabIndex = ANALYZER_TABS.findIndex((t) => t.id === tool);
 
   const resetPaneTransform = useCallback((animated: boolean) => {
@@ -571,9 +576,16 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
       {/* Selection Banner */}
       {isSelecting && (
         <div className="px-3.5 sm:px-4 py-2 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-900/60 flex items-center justify-between gap-2 text-xs sm:text-sm">
-          <span className="font-semibold text-blue-700 dark:text-blue-300 tabular-nums truncate">
-            {selectedIds.length} selected
-          </span>
+          <div className="flex items-center gap-2 min-w-0 truncate">
+            <span className="font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
+              {selectedIds.length} selected
+            </span>
+            {selectedBytes > 0 && (
+              <span className="text-xs font-bold text-blue-700 dark:text-blue-300 tabular-nums bg-blue-100/90 dark:bg-blue-900/60 px-2 py-0.5 rounded-md shrink-0">
+                {formatBytes(selectedBytes, 2)}
+              </span>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setSelectedIds([])}
@@ -981,7 +993,9 @@ export const AnalyzerView: React.FC<AnalyzerViewProps> = memo(({
               className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40"
             >
               <Trash2 size={18} />
-              <span className="text-[11px] font-medium">Delete</span>
+              <span className="text-[11px] font-medium">
+                Delete{selectedBytes > 0 ? ` (${formatBytes(selectedBytes, 1)})` : ''}
+              </span>
             </button>
 
             <div className="relative">
