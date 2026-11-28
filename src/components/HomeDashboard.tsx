@@ -68,15 +68,15 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
     explicitFreeBytes !== undefined && explicitFreeBytes >= 0
       ? explicitFreeBytes
       : Math.max(0, totalBytes - usedBytes);
-  const usedPercent =
+  const freePercent =
     isMounted && totalBytes > 0
-      ? Math.min(100, Math.max(0, Math.round((usedBytes / totalBytes) * 100)))
+      ? Math.max(0, Math.min(100, Math.round((freeBytes / totalBytes) * 100)))
       : 0;
   const freeMb = Math.round(freeBytes / (1024 * 1024));
 
   const radius = 14;
   const circumference = 2 * Math.PI * radius;
-  const displayOffset = circumference - (usedPercent / 100) * circumference;
+  const displayOffset = circumference - (freePercent / 100) * circumference;
   const gradId = `microsd_grad_${id}`;
 
   return (
@@ -114,7 +114,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
       </svg>
 
       <div className="relative z-10 px-2 min-[360px]:px-2.5 sm:px-3 py-2.5 sm:py-3 flex items-center gap-1.5 min-[360px]:gap-2 sm:gap-2.5 min-h-[84px] sm:min-h-[94px] overflow-hidden">
-        {/* Left: Storage Gauge Circle with Normal Border */}
+        {/* Left: Storage Gauge Circle with Normal Border showing % Free */}
         <div className="relative w-9 h-9 min-[360px]:w-10 min-[360px]:h-10 sm:w-11 sm:h-11 shrink-0 flex items-center justify-center rounded-full border-[1.5px] border-slate-400/80 bg-[#161a22] shadow-inner">
           <svg className="w-full h-full -rotate-90 p-0.5" viewBox="0 0 36 36" aria-hidden="true">
             <circle cx="18" cy="18" r={radius} fill="#141820" />
@@ -125,7 +125,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
                 cy="18"
                 r={radius}
                 fill="none"
-                stroke="#FFFFFF"
+                stroke="#38BDF8"
                 strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeDasharray={circumference}
@@ -134,13 +134,13 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
             )}
           </svg>
           <span className="absolute inset-0 flex items-center justify-center text-[9px] min-[360px]:text-[10px] sm:text-xs font-bold text-white tabular-nums tracking-tight leading-none pointer-events-none select-none">
-            {isMounted ? `${usedPercent}%` : '0%'}
+            {isMounted ? `${freePercent}%` : '0%'}
           </span>
         </div>
 
         {/* Right Content - 3 Distinct Readable Rows */}
         <div className="flex-1 min-w-0 overflow-hidden flex flex-col justify-center gap-0.5 sm:gap-1">
-          {/* Row 1: Title and Arrow */}
+          {/* Row 1: Storage Name */}
           <div className="flex items-center justify-between gap-0.5 min-w-0 w-full overflow-hidden">
             <h2 className="text-[10px] min-[360px]:text-[10.5px] min-[400px]:text-[11.5px] sm:text-xs font-bold text-white tracking-tight leading-tight truncate min-w-0 flex-1">
               {title}
@@ -153,16 +153,16 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
             )}
           </div>
 
-          {/* Row 2: Used Storage / Total Storage */}
+          {/* Row 2: Free Space / Total Space */}
           <div className="text-[8px] min-[360px]:text-[8.5px] min-[400px]:text-[9.5px] sm:text-[11px] tabular-nums leading-tight font-semibold min-w-0 overflow-hidden">
             {isMounted ? (
               <div className="flex items-center gap-0.5 whitespace-nowrap overflow-hidden">
-                <span className="text-[#F59E0B] font-bold shrink-0">
-                  <span className="hidden min-[420px]:inline">{formatBytes(usedBytes, 2)}</span>
-                  <span className="min-[420px]:hidden">{formatBytes(usedBytes, 1)}</span>
+                <span className="text-white font-bold shrink-0">
+                  <span className="hidden min-[420px]:inline">{formatBytes(freeBytes, 2)}</span>
+                  <span className="min-[420px]:hidden">{formatBytes(freeBytes, 1)}</span>
                 </span>
                 <span className="text-slate-400 shrink-0">
-                  <span className="hidden min-[420px]:inline">/ {formatBytes(totalBytes, 2)}</span>
+                  <span className="hidden min-[420px]:inline">/ {formatBytes(totalBytes, 1)}</span>
                   <span className="min-[420px]:hidden">/ {formatBytes(totalBytes, 1)}</span>
                 </span>
               </div>
@@ -173,7 +173,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
             )}
           </div>
 
-          {/* Row 3: MB Free */}
+          {/* Row 3: Free Space in MB */}
           {isMounted && (
             <div className="text-[8px] min-[360px]:text-[8.5px] min-[400px]:text-[9.5px] sm:text-[11px] text-slate-300 tabular-nums leading-tight font-medium whitespace-nowrap overflow-hidden">
               <span className="text-sky-300 font-bold">{freeMb.toLocaleString()} MB</span> Free
@@ -277,9 +277,9 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = memo(({
     return { internalFilesBytes: intBytes, sdFilesBytes: extBytes, counts: catCounts };
   }, [files, installedAppsCount]);
 
-  // Live dynamic storage capacity matching reference screenshot
-  const targetInternalTotal = 108.15 * 1024 * 1024 * 1024;
-  const targetInternalUsed = 60.86 * 1024 * 1024 * 1024;
+  // Live dynamic storage capacity matching user demo (48.42 GB Free / 108.2 GB Total)
+  const targetInternalTotal = 108.2 * 1024 * 1024 * 1024;
+  const targetInternalUsed = (108.2 - 48.42) * 1024 * 1024 * 1024;
   const finalInternalTotal = storageStats?.internal?.totalBytes || targetInternalTotal;
   const finalInternalUsed =
     storageStats?.internal?.usedBytes ??

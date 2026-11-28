@@ -212,8 +212,8 @@ export async function getLiveStorageStats(
   }
 
   // Web browser fallback: realistic Android device storage baseline
-  const deviceTotal = 108.15 * 1024 * 1024 * 1024; // 108.15 GB user partition
-  const baseUsed = 60.86 * 1024 * 1024 * 1024;     // 60.86 GB OS + baseline used
+  const deviceTotal = 108.2 * 1024 * 1024 * 1024; // 108.2 GB user partition
+  const baseUsed = (108.2 - 48.42) * 1024 * 1024 * 1024; // 59.78 GB OS + baseline used
   const deviceUsed = Math.min(deviceTotal, baseUsed + fallbackFilesBytes);
   const free = Math.max(0, deviceTotal - deviceUsed);
   const pct = Math.round((deviceUsed / deviceTotal) * 100);
