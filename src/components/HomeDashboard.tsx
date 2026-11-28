@@ -72,15 +72,11 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
     isMounted && totalBytes > 0
       ? Math.min(100, Math.max(0, Math.round((usedBytes / totalBytes) * 100)))
       : 0;
-  const freePercent =
-    isMounted && totalBytes > 0
-      ? Math.max(0, 100 - usedPercent)
-      : 0;
   const freeMb = Math.round(freeBytes / (1024 * 1024));
 
-  const radius = 18;
+  const radius = 14;
   const circumference = 2 * Math.PI * radius;
-  const displayOffset = circumference - (freePercent / 100) * circumference;
+  const displayOffset = circumference - (usedPercent / 100) * circumference;
   const gradId = `microsd_grad_${id}`;
 
   return (
@@ -117,64 +113,61 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
         <line x1="7" y1="71.5" x2="333" y2="71.5" stroke="#606A7E" strokeWidth="0.8" strokeOpacity="0.4" />
       </svg>
 
-      <div className="relative z-10 px-2 min-[360px]:px-2.5 sm:px-4 py-3 sm:py-3.5 flex items-center gap-2 min-[360px]:gap-2.5 sm:gap-3.5 min-h-[96px] sm:min-h-[106px] overflow-hidden">
+      <div className="relative z-10 px-2 min-[360px]:px-2.5 sm:px-3 py-2.5 sm:py-3 flex items-center gap-1.5 min-[360px]:gap-2 sm:gap-2.5 min-h-[84px] sm:min-h-[94px] overflow-hidden">
         {/* Left: Storage Gauge Circle with Normal Border */}
-        <div className="relative w-11 h-11 min-[360px]:w-12 min-[360px]:h-12 sm:w-14 sm:h-14 shrink-0 flex items-center justify-center rounded-full border-2 border-slate-500/80 dark:border-slate-500 bg-[#191e29] shadow-inner">
-          <svg className="w-full h-full -rotate-90 p-0.5" viewBox="0 0 44 44" aria-hidden="true">
-            <circle cx="22" cy="22" r={radius} fill="#151922" />
-            <circle cx="22" cy="22" r={radius} fill="none" stroke="#2d3545" strokeWidth="2.8" />
+        <div className="relative w-9 h-9 min-[360px]:w-10 min-[360px]:h-10 sm:w-11 sm:h-11 shrink-0 flex items-center justify-center rounded-full border-[1.5px] border-slate-400/80 bg-[#161a22] shadow-inner">
+          <svg className="w-full h-full -rotate-90 p-0.5" viewBox="0 0 36 36" aria-hidden="true">
+            <circle cx="18" cy="18" r={radius} fill="#141820" />
+            <circle cx="18" cy="18" r={radius} fill="none" stroke="#2c3444" strokeWidth="2.5" />
             {isMounted && (
               <circle
-                cx="22"
-                cy="22"
+                cx="18"
+                cy="18"
                 r={radius}
                 fill="none"
-                stroke="#38BDF8"
-                strokeWidth="2.8"
+                stroke="#FFFFFF"
+                strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeDasharray={circumference}
                 strokeDashoffset={displayOffset}
               />
             )}
           </svg>
-          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none select-none">
-            <span className="text-[10px] min-[360px]:text-[11px] sm:text-[13px] font-bold text-white tabular-nums tracking-tight leading-none">
-              {isMounted ? `${freePercent}%` : '0%'}
-            </span>
-            <span className="text-[6px] min-[360px]:text-[6.5px] sm:text-[7.5px] font-bold text-sky-400 uppercase tracking-wider leading-none mt-0.5">
-              {isMounted ? 'Free' : 'Off'}
-            </span>
-          </div>
+          <span className="absolute inset-0 flex items-center justify-center text-[9px] min-[360px]:text-[10px] sm:text-xs font-bold text-white tabular-nums tracking-tight leading-none pointer-events-none select-none">
+            {isMounted ? `${usedPercent}%` : '0%'}
+          </span>
         </div>
 
         {/* Right Content - 3 Distinct Readable Rows */}
-        <div className="flex-1 min-w-0 overflow-hidden flex flex-col justify-center gap-1 sm:gap-1.5">
+        <div className="flex-1 min-w-0 overflow-hidden flex flex-col justify-center gap-0.5 sm:gap-1">
           {/* Row 1: Title and Arrow */}
-          <div className="flex items-center justify-between gap-1 min-w-0 w-full overflow-hidden">
-            <h2 className="text-[11px] min-[360px]:text-[12px] min-[400px]:text-[13px] sm:text-sm font-bold text-white tracking-tight leading-snug truncate min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-0.5 min-w-0 w-full overflow-hidden">
+            <h2 className="text-[10px] min-[360px]:text-[10.5px] min-[400px]:text-[11.5px] sm:text-xs font-bold text-white tracking-tight leading-tight truncate min-w-0 flex-1">
               {title}
             </h2>
             {isMounted && (
               <ArrowRight
-                size={12}
+                size={11}
                 className="text-slate-400 group-hover:text-white group-hover:translate-x-0.5 transition-all shrink-0 ml-0.5"
               />
             )}
           </div>
 
-          {/* Row 2: Free Storage / Total Storage */}
-          <div className="text-[9.5px] min-[360px]:text-[10px] min-[400px]:text-[11px] sm:text-xs tabular-nums leading-snug font-semibold min-w-0 overflow-hidden">
+          {/* Row 2: Used Storage / Total Storage */}
+          <div className="text-[8px] min-[360px]:text-[8.5px] min-[400px]:text-[9.5px] sm:text-[11px] tabular-nums leading-tight font-semibold min-w-0 overflow-hidden">
             {isMounted ? (
-              <div className="flex items-center gap-1 whitespace-nowrap overflow-hidden truncate">
-                <span className="text-white font-bold shrink-0">
-                  {formatBytes(freeBytes, 2)} Free
+              <div className="flex items-center gap-0.5 whitespace-nowrap overflow-hidden">
+                <span className="text-[#F59E0B] font-bold shrink-0">
+                  <span className="hidden min-[420px]:inline">{formatBytes(usedBytes, 2)}</span>
+                  <span className="min-[420px]:hidden">{formatBytes(usedBytes, 1)}</span>
                 </span>
-                <span className="text-slate-400 truncate">
-                  / {formatBytes(totalBytes, 2)}
+                <span className="text-slate-400 shrink-0">
+                  <span className="hidden min-[420px]:inline">/ {formatBytes(totalBytes, 2)}</span>
+                  <span className="min-[420px]:hidden">/ {formatBytes(totalBytes, 1)}</span>
                 </span>
               </div>
             ) : (
-              <span className="text-slate-400 italic font-medium whitespace-nowrap truncate block">
+              <span className="text-slate-400 italic font-medium whitespace-nowrap block">
                 {unmountedText}
               </span>
             )}
@@ -182,7 +175,7 @@ const MicroSdCard: React.FC<MicroSdCardProps> = memo(({
 
           {/* Row 3: MB Free */}
           {isMounted && (
-            <div className="text-[9px] min-[360px]:text-[9.5px] min-[400px]:text-[10.5px] sm:text-[11.5px] text-slate-300 tabular-nums leading-snug font-medium whitespace-nowrap truncate overflow-hidden">
+            <div className="text-[8px] min-[360px]:text-[8.5px] min-[400px]:text-[9.5px] sm:text-[11px] text-slate-300 tabular-nums leading-tight font-medium whitespace-nowrap overflow-hidden">
               <span className="text-sky-300 font-bold">{freeMb.toLocaleString()} MB</span> Free
             </div>
           )}
